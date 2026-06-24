@@ -59,6 +59,9 @@ type statusMsg struct {
 // configChangedMsg tells App the config was saved; rebuild list + clear caches.
 type configChangedMsg struct{}
 
+// deleteEntryMsg asks App to delete entry idx (App shows the confirm dialog).
+type deleteEntryMsg struct{ idx int }
+
 // chanLogger adapts syncer.Logger onto a tea.Msg channel so run output streams
 // into the UI.
 type chanLogger struct{ ch chan<- tea.Msg }
