@@ -77,3 +77,30 @@ func TestCleanupByCountAndDays(t *testing.T) {
 		t.Fatal("recent log must survive")
 	}
 }
+
+func TestCleanupByCountOnly(t *testing.T) {
+	dir := t.TempDir()
+	names := []string{
+		"2026-06-24_030000.log", // newest
+		"2026-06-23_030000.log",
+		"2026-06-22_030000.log", // oldest -> should be pruned
+	}
+	for _, n := range names {
+		if err := os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// keepDays=0 disables the age rule; keepCount=2 keeps the 2 newest.
+	if err := Cleanup(dir, 0, 2, ts("2026-06-24_040000")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "2026-06-22_030000.log")); err == nil {
+		t.Fatal("oldest log should be pruned by count")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "2026-06-24_030000.log")); err != nil {
+		t.Fatal("newest log must survive")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "2026-06-23_030000.log")); err != nil {
+		t.Fatal("second-newest log must survive")
+	}
+}
