@@ -84,14 +84,15 @@ func (m *runModel) start(entries []config.Sync, dryRun bool) tea.Cmd {
 		}
 		deps := syncer.Deps{Runner: m.runner, FSType: m.fsType, Now: m.now, Log: lg}
 		results := syncer.SyncMany(ctx, entries, m.cfg.Defaults, deps, dryRun)
-		line := summarize(results, m.now().Sub(start))
-		lg.Infof("%s", line)
+		dur := m.now().Sub(start)
+		line := summarize(results, dur)
 		if rl != nil {
+			rl.Infof("%s", line)
 			_ = logx.AppendSummary(m.logDir, start.Format("2006-01-02 15:04:05")+" "+line)
 			_ = rl.Close()
 			_ = logx.Cleanup(m.logDir, m.cfg.Log.KeepDays, m.cfg.Log.KeepCount, m.now())
 		}
-		ch <- runDoneMsg{results: results, cancelled: ctx.Err() != nil}
+		ch <- runDoneMsg{results: results, cancelled: ctx.Err() != nil, dur: dur}
 	}()
 
 	return waitForMsg(ch)
@@ -110,9 +111,9 @@ func (m runModel) Update(msg tea.Msg) (runModel, tea.Cmd) {
 	case runDoneMsg:
 		m.running = false
 		m.results = msg.results
-		summary := "✔ " + summarize(msg.results, 0)
+		summary := "✔ " + summarize(msg.results, msg.dur)
 		if msg.cancelled {
-			summary = "⚠ 已取消 — " + summarize(msg.results, 0)
+			summary = "⚠ 已取消 — " + summarize(msg.results, msg.dur)
 		}
 		m.lines = append(m.lines, summary)
 		m.vp.SetContent(strings.Join(m.lines, "\n"))

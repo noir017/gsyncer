@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -73,5 +74,24 @@ func TestSummarize(t *testing.T) {
 	got := summarize([]syncer.Result{{OK: true}, {OK: false}}, 3400*time.Millisecond)
 	if got != "成功 1 / 失败 1 / 耗时 3.4s" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestRunDoneSummaryUsesDuration(t *testing.T) {
+	m := newTestRun()
+	m.running = true
+	m, _ = m.Update(runDoneMsg{
+		results: []syncer.Result{{OK: true}},
+		dur:     3400 * time.Millisecond,
+	})
+	if len(m.lines) == 0 {
+		t.Fatal("no lines appended")
+	}
+	last := m.lines[len(m.lines)-1]
+	if !strings.Contains(last, "耗时 3.4s") {
+		t.Fatalf("duration not in summary: %q", last)
+	}
+	if !strings.Contains(last, "成功 1 / 失败 0") {
+		t.Fatalf("counts not in summary: %q", last)
 	}
 }
