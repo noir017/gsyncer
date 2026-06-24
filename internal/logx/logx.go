@@ -21,7 +21,8 @@ func NewRunLogger(dir string, ts time.Time) (*RunLogger, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	f, err := os.Create(filepath.Join(dir, ts.Format(tsLayout)+".log"))
+	f, err := os.OpenFile(filepath.Join(dir, ts.Format(tsLayout)+".log"),
+		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return nil, err
 	}
