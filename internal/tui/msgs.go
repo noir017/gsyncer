@@ -64,6 +64,9 @@ type configChangedMsg struct{}
 // deleteEntryMsg asks App to delete entry idx (App shows the confirm dialog).
 type deleteEntryMsg struct{ idx int }
 
+// requestQuitMsg asks App to show the quit-confirm dialog.
+type requestQuitMsg struct{}
+
 // chanLogger adapts syncer.Logger onto a tea.Msg channel so run output streams
 // into the UI.
 type chanLogger struct{ ch chan<- tea.Msg }

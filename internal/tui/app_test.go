@@ -2,6 +2,7 @@ package tui
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -113,5 +114,97 @@ func TestAppRunDoneUpdatesListDots(t *testing.T) {
 	app.Update(runDoneMsg{results: []syncer.Result{syncerResultFor("a", true)}})
 	if app.list.lastRun["a"] != runOK {
 		t.Fatal("list dot should be runOK after run")
+	}
+}
+
+func TestAppQuitConfirmFlow(t *testing.T) {
+	app := newTestApp(twoEntryCfg(), "x")
+
+	// requestQuitMsg sets confirmQuit
+	model, _ := app.Update(requestQuitMsg{})
+	app = model.(*App)
+	if !app.confirmQuit {
+		t.Fatal("expected confirmQuit == true after requestQuitMsg")
+	}
+
+	// 'n' cancels, no quit cmd
+	model, cmd := app.Update(keyMsg("n"))
+	app = model.(*App)
+	if app.confirmQuit {
+		t.Fatal("expected confirmQuit == false after 'n'")
+	}
+	if cmd != nil {
+		// cmd should be nil (no quit)
+		// tea.Quit returns a non-nil cmd, so verify it's not a quit
+		msg := cmd()
+		if _, ok := msg.(tea.QuitMsg); ok {
+			t.Fatal("'n' should not quit")
+		}
+	}
+
+	// send requestQuitMsg again, then 'y' should quit
+	model, _ = app.Update(requestQuitMsg{})
+	app = model.(*App)
+	if !app.confirmQuit {
+		t.Fatal("expected confirmQuit == true after second requestQuitMsg")
+	}
+	_, cmd = app.Update(keyMsg("y"))
+	if cmd == nil {
+		t.Fatal("expected quit cmd after 'y'")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatalf("expected tea.QuitMsg after 'y', got %T", cmd())
+	}
+}
+
+func TestAppHelpToggle(t *testing.T) {
+	app := newTestApp(twoEntryCfg(), "x")
+
+	// starts visible
+	if !app.helpVisible {
+		t.Fatal("helpVisible should be true on start")
+	}
+
+	// on screenList, '?' toggles off
+	app.screen = screenList
+	model, _ := app.Update(keyMsg("?"))
+	app = model.(*App)
+	if app.helpVisible {
+		t.Fatal("helpVisible should be false after first '?' on list")
+	}
+
+	// again toggles back on
+	model, _ = app.Update(keyMsg("?"))
+	app = model.(*App)
+	if !app.helpVisible {
+		t.Fatal("helpVisible should be true after second '?' on list")
+	}
+
+	// on screenForm, '?' should NOT toggle (goes to form input instead)
+	app.screen = screenForm
+	app.form = newForm(twoEntryCfg(), "x", 0)
+	before := app.helpVisible
+	app.Update(keyMsg("?"))
+	if app.helpVisible != before {
+		t.Fatal("helpVisible should be unchanged when screenForm receives '?'")
+	}
+}
+
+func TestAppViewShowsHelpWhenVisible(t *testing.T) {
+	app := newTestApp(twoEntryCfg(), "x")
+	app.screen = screenList
+
+	// helpVisible true by default: view should contain help text
+	view := app.View()
+	if !strings.Contains(view, "退出") {
+		t.Fatal("expected help text in view when helpVisible=true")
+	}
+
+	// toggle off
+	model, _ := app.Update(keyMsg("?"))
+	app = model.(*App)
+	view = app.View()
+	if strings.Contains(view, "退出") {
+		t.Fatal("expected no help text in view when helpVisible=false")
 	}
 }

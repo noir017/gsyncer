@@ -325,6 +325,5 @@ func (m formModel) View() string {
 	} else if m.status != "" {
 		b.WriteString("\n" + styleErr.Render(m.status))
 	}
-	b.WriteString("\n" + styleHelp.Render("tab/↓ 下一项  shift+tab/↑ 上一项  空格 切换 strict  ctrl+s 保存  esc 取消"))
 	return b.String()
 }

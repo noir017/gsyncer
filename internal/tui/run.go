@@ -165,12 +165,5 @@ func (m runModel) View() string {
 	var b strings.Builder
 	b.WriteString(styleTitle.Render(m.title) + "\n\n")
 	b.WriteString(styleBox.Render(m.vp.View()) + "\n")
-	if m.cancelling {
-		b.WriteString(styleHelp.Render("(取消中) ctrl+c 退出"))
-	} else if m.running {
-		b.WriteString(styleHelp.Render("(运行中) ctrl+c 中断"))
-	} else {
-		b.WriteString(styleHelp.Render("(完成) enter/esc 返回，ctrl+c 退出"))
-	}
 	return b.String()
 }
