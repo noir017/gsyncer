@@ -2,3 +2,4 @@
 /logs/
 /config.toml
 *.test
+/.superpowers/
