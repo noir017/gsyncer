@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"errors"
-	"io/fs"
 	"path/filepath"
 	"testing"
 
@@ -82,11 +80,6 @@ func TestLoadOrEmptyMissingFile(t *testing.T) {
 	}
 	if cfg == nil || len(cfg.Sync) != 0 {
 		t.Fatal("missing file must yield empty config")
-	}
-	// sanity: confirm the path truly does not exist
-	if _, statErr := config.Load(missing); !errors.Is(statErr, fs.ErrNotExist) {
-		// config.Load wraps os.Open error; this is just documentation, not asserted strictly
-		_ = statErr
 	}
 }
 
