@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"gsync/internal/config"
 	"gsync/internal/execx"
@@ -98,6 +99,16 @@ func (m *runModel) start(entries []config.Sync, dryRun bool) tea.Cmd {
 	return waitForMsg(ch)
 }
 
+// refreshContent re-renders the log buffer into the viewport, soft-wrapping
+// each line to the viewport width so long paths never run off-screen.
+func (m *runModel) refreshContent() {
+	content := strings.Join(m.lines, "\n")
+	if m.vp.Width > 0 {
+		content = lipgloss.NewStyle().Width(m.vp.Width).Render(content)
+	}
+	m.vp.SetContent(content)
+}
+
 // clampMin returns n if n >= lo, otherwise lo.
 func clampMin(n, lo int) int {
 	if n < lo {
@@ -112,7 +123,7 @@ func (m runModel) Update(msg tea.Msg) (runModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case logLineMsg:
 		m.lines = append(m.lines, msg.text)
-		m.vp.SetContent(strings.Join(m.lines, "\n"))
+		m.refreshContent()
 		m.vp.GotoBottom()
 		return m, waitForMsg(m.ch)
 
@@ -125,7 +136,7 @@ func (m runModel) Update(msg tea.Msg) (runModel, tea.Cmd) {
 			summary = "⚠ 已取消 — " + summarize(msg.results, msg.dur)
 		}
 		m.lines = append(m.lines, summary)
-		m.vp.SetContent(strings.Join(m.lines, "\n"))
+		m.refreshContent()
 		m.vp.GotoBottom()
 		return m, nil
 
@@ -138,7 +149,7 @@ func (m runModel) Update(msg tea.Msg) (runModel, tea.Cmd) {
 				}
 				m.cancelling = true
 				m.lines = append(m.lines, "⚠ 已请求取消…")
-				m.vp.SetContent(strings.Join(m.lines, "\n"))
+				m.refreshContent()
 				m.vp.GotoBottom()
 				return m, waitForMsg(m.ch) // keep draining until runDoneMsg
 			}
@@ -152,7 +163,7 @@ func (m runModel) Update(msg tea.Msg) (runModel, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.vp.Width = clampMin(msg.Width-4, 10)
 		m.vp.Height = clampMin(msg.Height-9, 3)
-		m.vp.SetContent(strings.Join(m.lines, "\n"))
+		m.refreshContent()
 		return m, nil
 	}
 
