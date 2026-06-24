@@ -48,6 +48,36 @@ func TestBtrfsEnsureCurrentNotSubvolume(t *testing.T) {
 	}
 }
 
+func TestBtrfsEnsureCurrentCreatesSubvolume(t *testing.T) {
+	root := t.TempDir()       // current does NOT exist yet
+	fr := &execx.FakeRunner{} // default handler returns success
+	be := NewBtrfs(fr)
+	cur, err := be.EnsureCurrent(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cur != filepath.Join(root, "current") {
+		t.Fatalf("cur = %q", cur)
+	}
+	if len(fr.Calls) != 1 || fr.Calls[0].Name != "btrfs" ||
+		strings.Join(fr.Calls[0].Args, " ") != "subvolume create "+filepath.Join(root, "current") {
+		t.Fatalf("expected `btrfs subvolume create <cur>`, got %+v", fr.Calls)
+	}
+}
+
+func TestBtrfsDeleteInvokesSubvolumeDelete(t *testing.T) {
+	fr := &execx.FakeRunner{}
+	be := NewBtrfs(fr)
+	target := "/data/x/snapshots/2026-06-24_030000"
+	if err := be.Delete(context.Background(), target); err != nil {
+		t.Fatal(err)
+	}
+	if len(fr.Calls) != 1 || fr.Calls[0].Name != "btrfs" ||
+		strings.Join(fr.Calls[0].Args, " ") != "subvolume delete "+target {
+		t.Fatalf("expected `btrfs subvolume delete <target>`, got %+v", fr.Calls)
+	}
+}
+
 func TestDetectChoosesBackend(t *testing.T) {
 	ctx := context.Background()
 	okBtrfs := &execx.FakeRunner{Handler: func(name string, args []string) (execx.Result, error) {
