@@ -157,6 +157,31 @@ func TestAppQuitConfirmFlow(t *testing.T) {
 	}
 }
 
+func TestAppCopyMsgRoutesToNewForm(t *testing.T) {
+	app := newTestApp(twoEntryCfg(), "x")
+	model, _ := app.Update(copyEntryMsg{idx: 0})
+	a := model.(*App)
+	if a.screen != screenForm {
+		t.Fatalf("screen = %d, want screenForm", a.screen)
+	}
+	if a.form.origIdx != -1 {
+		t.Fatalf("copy form.origIdx = %d, want -1", a.form.origIdx)
+	}
+}
+
+func TestAppQuitConfirmEnterQuits(t *testing.T) {
+	app := newTestApp(twoEntryCfg(), "x")
+	model, _ := app.Update(requestQuitMsg{})
+	app = model.(*App)
+	_, cmd := app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected quit cmd after enter (default Y)")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatalf("expected tea.QuitMsg after enter, got %T", cmd())
+	}
+}
+
 func TestAppHelpToggle(t *testing.T) {
 	app := newTestApp(twoEntryCfg(), "x")
 

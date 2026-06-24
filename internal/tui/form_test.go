@@ -106,6 +106,68 @@ func TestFormSaveValidationFailsNoWrite(t *testing.T) {
 	}
 }
 
+func TestFormNewSeedsDefaultPort(t *testing.T) {
+	cfg := &config.Config{Defaults: config.Defaults{SSHPort: 2222}}
+	m := newForm(cfg, "x", -1)
+	if got := m.inputs[fPort].Value(); got != "2222" {
+		t.Fatalf("new entry port = %q, want 2222", got)
+	}
+	// falls back to 22 when no default is configured
+	m2 := newForm(&config.Config{}, "x", -1)
+	if got := m2.inputs[fPort].Value(); got != "22" {
+		t.Fatalf("new entry port = %q, want 22", got)
+	}
+}
+
+func TestParsePasteKeyValue(t *testing.T) {
+	got := parsePaste("name=foo host=1.2.3.4 port=2200 user=root identity=~/.ssh/id remote=/data local=~/d")
+	want := map[int]string{
+		fName: "foo", fHost: "1.2.3.4", fPort: "2200", fUser: "root",
+		fIdentity: "~/.ssh/id", fRemote: "/data", fLocal: "~/d",
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Fatalf("field %d = %q, want %q", k, got[k], v)
+		}
+	}
+}
+
+func TestParsePasteScpShorthand(t *testing.T) {
+	got := parsePaste("root@example.com:/srv/www")
+	if got[fUser] != "root" || got[fHost] != "example.com" || got[fRemote] != "/srv/www" {
+		t.Fatalf("scp parse = %+v", got)
+	}
+}
+
+func TestApplyPasteFillsInputs(t *testing.T) {
+	m := newForm(&config.Config{}, "x", -1)
+	m.paste.SetValue("host=h user=u remote=/r")
+	m.applyPaste()
+	if m.inputs[fHost].Value() != "h" || m.inputs[fUser].Value() != "u" || m.inputs[fRemote].Value() != "/r" {
+		t.Fatal("applyPaste did not fill inputs")
+	}
+	if m.paste.Value() != "" {
+		t.Fatal("paste field should be cleared after parse")
+	}
+}
+
+func TestNewFormCopyIsNewWithUniqueName(t *testing.T) {
+	cfg := baseCfg() // one entry named "a"
+	m := newFormCopy(cfg, "x", 0)
+	if m.origIdx != -1 {
+		t.Fatalf("copy origIdx = %d, want -1 (new entry)", m.origIdx)
+	}
+	if got := m.inputs[fName].Value(); got != "a-copy" {
+		t.Fatalf("copy name = %q, want a-copy", got)
+	}
+	if m.inputs[fHost].Value() != "h" {
+		t.Fatal("copy should carry over host from source")
+	}
+	if !m.isDirty() {
+		t.Fatal("a populated copy should read as dirty")
+	}
+}
+
 func TestFormIsDirty(t *testing.T) {
 	m := newForm(baseCfg(), "x", 0)
 	if m.isDirty() {

@@ -65,6 +65,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.screen = screenForm
 		return a, a.form.Init()
 
+	case copyEntryMsg:
+		a.form = newFormCopy(a.cfg, a.cfgPath, msg.idx)
+		a.screen = screenForm
+		return a, a.form.Init()
+
 	case openSnapsMsg:
 		a.snaps = newSnaps(a.cfg.Sync[msg.idx], a.cfg.Defaults, a.runner, a.fsType)
 		if a.width > 0 {
@@ -115,13 +120,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 
-	// global quit-confirm dialog
+	// global quit-confirm dialog (default Y: enter confirms, only n/N cancels)
 	if a.confirmQuit {
 		if key, ok := msg.(tea.KeyMsg); ok {
-			if key.String() == "y" || key.String() == "Y" {
+			switch key.String() {
+			case "n", "N", "esc":
+				a.confirmQuit = false
+			case "y", "Y", "enter":
 				return a, tea.Quit
 			}
-			a.confirmQuit = false
 		}
 		return a, nil
 	}
@@ -167,9 +174,9 @@ func (a *App) deleteEntry(idx int) {
 func (a *App) helpLine() string {
 	switch a.screen {
 	case screenList:
-		return "↑/↓ 选择  enter 快照  a 新增  e 编辑  d 删除  s 同步  S 全部  r 刷新  ? 帮助  q 退出"
+		return "↑/↓ 选择  enter 快照  a 新增  c 复制  e 编辑  d 删除  s 同步  S 全部  r 刷新  ? 帮助  q 退出"
 	case screenForm:
-		return "tab/↓ 下一项  shift+tab/↑ 上一项  空格 切换 strict  ctrl+s 保存  esc 取消"
+		return "tab/↓ 下一项  shift+tab/↑ 上一项  空格 切换 strict  enter 解析粘贴  ctrl+s 保存  esc 取消"
 	case screenRun:
 		if a.run.cancelling {
 			return "(取消中) ctrl+c 退出"
@@ -201,7 +208,7 @@ func (a *App) View() string {
 	if a.confirmDelete {
 		b.WriteString("\n" + styleErr.Render("删除选中条目？(y/N)"))
 	} else if a.confirmQuit {
-		b.WriteString("\n" + styleErr.Render("退出 gsync？(y/N)"))
+		b.WriteString("\n" + styleErr.Render("退出 gsync？(Y/n)"))
 	} else if a.status != "" {
 		st := styleStatus
 		if a.statusErr {
