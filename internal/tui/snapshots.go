@@ -108,8 +108,22 @@ func (m snapsModel) Update(msg tea.Msg) (snapsModel, tea.Cmd) {
 	if m.restoring {
 		switch key.String() {
 		case "enter":
+			i := m.tbl.Cursor()
+			if i < 0 || i >= len(m.times) {
+				m.restoring = false
+				return m, nil
+			}
 			dst := strings.TrimSpace(m.restoreInput.Value())
-			src := m.snapPath(m.tbl.Cursor())
+			if dst == "" {
+				m.status = "目标路径不能为空"
+				return m, nil
+			}
+			cur := filepath.Clean(filepath.Join(m.entry.LocalPath, "current"))
+			if filepath.Clean(dst) == cur {
+				m.status = "不能覆盖 current 目录，请换一个目标路径"
+				return m, nil
+			}
+			src := m.snapPath(i)
 			if _, err := m.runner.Run(context.Background(), "cp", "-a", src, dst); err != nil {
 				m.status = "恢复失败: " + err.Error()
 			} else {
