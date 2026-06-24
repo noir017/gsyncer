@@ -104,3 +104,28 @@ func TestCleanupByCountOnly(t *testing.T) {
 		t.Fatal("second-newest log must survive")
 	}
 }
+
+func TestRunLoggerSameSecondAppends(t *testing.T) {
+	dir := t.TempDir()
+	when := ts("2026-06-24_030000")
+	l1, err := NewRunLogger(dir, when)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l1.Infof("first run")
+	l1.Close()
+	l2, err := NewRunLogger(dir, when) // same second -> same filename
+	if err != nil {
+		t.Fatal(err)
+	}
+	l2.Infof("second run")
+	l2.Close()
+	data, err := os.ReadFile(filepath.Join(dir, "2026-06-24_030000.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(data)
+	if !strings.Contains(s, "first run") || !strings.Contains(s, "second run") {
+		t.Fatalf("same-second run lost a log line: %q", s)
+	}
+}
