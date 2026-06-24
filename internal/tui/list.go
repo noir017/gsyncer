@@ -123,7 +123,9 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 		}
 	case "r":
 		m.refresh()
-	case "q", "esc", "ctrl+c":
+	case "q", "esc":
+		return m, func() tea.Msg { return requestQuitMsg{} }
+	case "ctrl+c":
 		return m, func() tea.Msg { return quitMsg{} }
 	}
 	return m, nil
@@ -151,7 +153,5 @@ func (m listModel) View() string {
 			cursor, dot, s.Name, s.User, s.Host, s.RemotePath, s.LocalPath,
 			m.counts[s.LocalPath], m.backends[s.LocalPath]))
 	}
-	b.WriteString("\n" + styleHelp.Render(
-		"↑/↓ 选择  enter 快照  a 新增  e 编辑  d 删除  s 同步  S 全部  r 刷新  ? 帮助  q 退出"))
 	return b.String()
 }

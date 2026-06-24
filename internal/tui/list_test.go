@@ -124,26 +124,36 @@ func TestListDeleteKeyEmitsDeleteMsg(t *testing.T) {
 	}
 }
 
-func TestListQuitKeysEmitQuit(t *testing.T) {
+func TestListQOrEscRequestsQuit(t *testing.T) {
 	cases := []struct {
 		name string
 		key  tea.KeyMsg
 	}{
 		{"q", keyMsg("q")},
 		{"esc", tea.KeyMsg{Type: tea.KeyEsc}},
-		{"ctrl+c", tea.KeyMsg{Type: tea.KeyCtrlC}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			m := newList(twoEntryCfg(), &execx.FakeRunner{}, nonBtrfsFS)
 			_, cmd := m.Update(tc.key)
 			if cmd == nil {
-				t.Fatal("expected quit cmd")
+				t.Fatal("expected cmd")
 			}
-			if _, ok := cmd().(quitMsg); !ok {
-				t.Fatalf("key %q: expected quitMsg", tc.name)
+			if _, ok := cmd().(requestQuitMsg); !ok {
+				t.Fatalf("key %q: expected requestQuitMsg, got %T", tc.name, cmd())
 			}
 		})
+	}
+}
+
+func TestListCtrlCEmitsQuit(t *testing.T) {
+	m := newList(twoEntryCfg(), &execx.FakeRunner{}, nonBtrfsFS)
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Fatal("expected quit cmd")
+	}
+	if _, ok := cmd().(quitMsg); !ok {
+		t.Fatalf("ctrl+c: expected quitMsg, got %T", cmd())
 	}
 }
 

@@ -195,6 +195,5 @@ func (m snapsModel) View() string {
 	} else if m.status != "" {
 		b.WriteString("\n" + styleStatus.Render(m.status))
 	}
-	b.WriteString("\n" + styleHelp.Render("↑/↓ 选择  d 删除  p 按策略清理  x 恢复  esc 返回"))
 	return b.String()
 }

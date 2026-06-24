@@ -29,6 +29,8 @@ type App struct {
 	statusErr     bool
 	confirmDelete bool
 	deleteIdx     int
+	confirmQuit   bool
+	helpVisible   bool
 
 	width, height int
 }
@@ -37,8 +39,9 @@ func newApp(cfgPath, logDir string, cfg *config.Config, runner execx.Runner, fsT
 	return &App{
 		cfgPath: cfgPath, logDir: logDir, cfg: cfg,
 		runner: runner, fsType: fsType, now: now,
-		screen: screenList,
-		list:   newList(cfg, runner, fsType),
+		screen:      screenList,
+		list:        newList(cfg, runner, fsType),
+		helpVisible: true,
 	}
 }
 
@@ -75,6 +78,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.deleteIdx = msg.idx
 		return a, nil
 
+	case requestQuitMsg:
+		a.confirmQuit = true
+		return a, nil
+
 	case runEntriesMsg:
 		a.run = newRun(a.cfg, a.logDir, a.runner, a.fsType, a.now)
 		if a.width > 0 {
@@ -105,6 +112,24 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			a.confirmDelete = false
 		}
+		return a, nil
+	}
+
+	// global quit-confirm dialog
+	if a.confirmQuit {
+		if key, ok := msg.(tea.KeyMsg); ok {
+			if key.String() == "y" || key.String() == "Y" {
+				return a, tea.Quit
+			}
+			a.confirmQuit = false
+		}
+		return a, nil
+	}
+
+	// toggle help visibility (only on screens without free-text input)
+	if key, ok := msg.(tea.KeyMsg); ok && key.String() == "?" &&
+		a.screen != screenForm && !(a.screen == screenSnaps && a.snaps.restoring) {
+		a.helpVisible = !a.helpVisible
 		return a, nil
 	}
 
@@ -139,6 +164,26 @@ func (a *App) deleteEntry(idx int) {
 	a.status, a.statusErr = "已删除条目", false
 }
 
+func (a *App) helpLine() string {
+	switch a.screen {
+	case screenList:
+		return "↑/↓ 选择  enter 快照  a 新增  e 编辑  d 删除  s 同步  S 全部  r 刷新  ? 帮助  q 退出"
+	case screenForm:
+		return "tab/↓ 下一项  shift+tab/↑ 上一项  空格 切换 strict  ctrl+s 保存  esc 取消"
+	case screenRun:
+		if a.run.cancelling {
+			return "(取消中) ctrl+c 退出"
+		}
+		if a.run.running {
+			return "(运行中) ctrl+c 中断"
+		}
+		return "(完成) enter/esc 返回，ctrl+c 退出"
+	case screenSnaps:
+		return "↑/↓ 选择  d 删除  p 按策略清理  x 恢复  esc 返回"
+	}
+	return ""
+}
+
 func (a *App) View() string {
 	var body string
 	switch a.screen {
@@ -155,12 +200,17 @@ func (a *App) View() string {
 	b.WriteString(body)
 	if a.confirmDelete {
 		b.WriteString("\n" + styleErr.Render("删除选中条目？(y/N)"))
+	} else if a.confirmQuit {
+		b.WriteString("\n" + styleErr.Render("退出 gsync？(y/N)"))
 	} else if a.status != "" {
 		st := styleStatus
 		if a.statusErr {
 			st = styleErr
 		}
 		b.WriteString("\n" + st.Render(a.status))
+	}
+	if a.helpVisible {
+		b.WriteString("\n" + styleHelp.Render(a.helpLine()))
 	}
 	return b.String()
 }
