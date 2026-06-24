@@ -78,3 +78,21 @@ func TestZeroPolicyKeepsNothing(t *testing.T) {
 		t.Fatalf("zero policy should keep nothing: %v", k)
 	}
 }
+
+func TestSemiannualBucketsByHalfYear(t *testing.T) {
+	in := []time.Time{
+		d("2026-07-01_000000"), // H2 2026
+		d("2026-06-30_000000"), // H1 2026 (June -> first half)
+		d("2026-02-01_000000"), // H1 2026 (same bucket as June)
+	}
+	// Semiannual:1 -> only the most recent half-year bucket (H2) survives.
+	keep := Select(in, Policy{Semiannual: 1})
+	if len(keep) != 1 || !keep[0].Equal(d("2026-07-01_000000")) {
+		t.Fatalf("Semiannual:1 keep = %v", keep)
+	}
+	// Semiannual:2 -> newest of H2 (07-01) and newest of H1 (06-30).
+	keep2 := Select(in, Policy{Semiannual: 2})
+	if len(keep2) != 2 || !keep2[0].Equal(d("2026-07-01_000000")) || !keep2[1].Equal(d("2026-06-30_000000")) {
+		t.Fatalf("Semiannual:2 keep2 = %v", keep2)
+	}
+}
