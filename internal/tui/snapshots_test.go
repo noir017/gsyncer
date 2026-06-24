@@ -149,3 +149,137 @@ func TestSnapsRestoreBlocksCurrent(t *testing.T) {
 		t.Fatalf("status should mention current/不能覆盖, got %q", m.status)
 	}
 }
+
+func TestSnapsRestoreConfirmsExistingDest(t *testing.T) {
+	const ts = "2026-06-24_030000"
+	e := makeSnaps(t, ts)
+	fr := &execx.FakeRunner{}
+	m := newSnaps(e, config.Defaults{}, fr, nonBtrfsFS)
+
+	// create an existing destination directory
+	existingDst := filepath.Join(e.LocalPath, "existing")
+	if err := os.MkdirAll(existingDst, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// press x to enter restore mode
+	m, _ = m.Update(keyMsg("x"))
+	if !m.restoring {
+		t.Fatal("should be in restoring mode after x")
+	}
+
+	// set destination to the existing directory
+	m.restoreInput.SetValue(existingDst)
+
+	// press enter — should transition to confirmOverwrite, not run cp
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if !m.confirmOverwrite {
+		t.Fatal("expected confirmOverwrite == true after enter with existing dst")
+	}
+	if m.restoring {
+		t.Fatal("expected restoring == false after transitioning to confirmOverwrite")
+	}
+	for _, c := range fr.Calls {
+		if c.Name == "cp" {
+			t.Fatalf("cp must not be called before confirmation, got call: %+v", c)
+		}
+	}
+
+	// press y to confirm — should issue cp
+	m, _ = m.Update(keyMsg("y"))
+
+	if m.confirmOverwrite {
+		t.Fatal("expected confirmOverwrite == false after y")
+	}
+	var cpCall *execx.Call
+	for i := range fr.Calls {
+		if fr.Calls[i].Name == "cp" {
+			cpCall = &fr.Calls[i]
+			break
+		}
+	}
+	if cpCall == nil {
+		t.Fatal("expected a cp call after y, got none")
+	}
+	dst := cpCall.Args[len(cpCall.Args)-1]
+	if dst != existingDst {
+		t.Fatalf("cp dst = %q, want %q", dst, existingDst)
+	}
+}
+
+func TestSnapsRestoreOverwriteCancel(t *testing.T) {
+	const ts = "2026-06-24_030000"
+	e := makeSnaps(t, ts)
+	fr := &execx.FakeRunner{}
+	m := newSnaps(e, config.Defaults{}, fr, nonBtrfsFS)
+
+	// create an existing destination directory
+	existingDst := filepath.Join(e.LocalPath, "existing")
+	if err := os.MkdirAll(existingDst, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// press x to enter restore mode
+	m, _ = m.Update(keyMsg("x"))
+	m.restoreInput.SetValue(existingDst)
+
+	// press enter — transition to confirmOverwrite
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.confirmOverwrite {
+		t.Fatal("expected confirmOverwrite == true")
+	}
+
+	// press n to cancel
+	m, _ = m.Update(keyMsg("n"))
+
+	if m.confirmOverwrite {
+		t.Fatal("expected confirmOverwrite == false after n")
+	}
+	for _, c := range fr.Calls {
+		if c.Name == "cp" {
+			t.Fatalf("cp must not be called after cancel, got call: %+v", c)
+		}
+	}
+	if !strings.Contains(m.status, "已取消") {
+		t.Fatalf("status should mention 已取消, got %q", m.status)
+	}
+}
+
+func TestSnapsRestoreNewDestNoConfirm(t *testing.T) {
+	const ts = "2026-06-24_030000"
+	e := makeSnaps(t, ts)
+	fr := &execx.FakeRunner{}
+	m := newSnaps(e, config.Defaults{}, fr, nonBtrfsFS)
+
+	// destination that does NOT exist
+	newDst := filepath.Join(e.LocalPath, "nonexistent-restore")
+
+	// press x to enter restore mode
+	m, _ = m.Update(keyMsg("x"))
+	if !m.restoring {
+		t.Fatal("should be in restoring mode after x")
+	}
+	m.restoreInput.SetValue(newDst)
+
+	// press enter — should issue cp directly without confirm
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.confirmOverwrite {
+		t.Fatal("confirmOverwrite should not be set for non-existing destination")
+	}
+	var cpCall *execx.Call
+	for i := range fr.Calls {
+		if fr.Calls[i].Name == "cp" {
+			cpCall = &fr.Calls[i]
+			break
+		}
+	}
+	if cpCall == nil {
+		t.Fatal("expected a cp call for non-existing destination, got none")
+	}
+	dst := cpCall.Args[len(cpCall.Args)-1]
+	if dst != newDst {
+		t.Fatalf("cp dst = %q, want %q", dst, newDst)
+	}
+}
