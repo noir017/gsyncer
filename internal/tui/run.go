@@ -98,6 +98,14 @@ func (m *runModel) start(entries []config.Sync, dryRun bool) tea.Cmd {
 	return waitForMsg(ch)
 }
 
+// clampMin returns n if n >= lo, otherwise lo.
+func clampMin(n, lo int) int {
+	if n < lo {
+		return lo
+	}
+	return n
+}
+
 func (m runModel) Init() tea.Cmd { return nil }
 
 func (m runModel) Update(msg tea.Msg) (runModel, tea.Cmd) {
@@ -140,6 +148,12 @@ func (m runModel) Update(msg tea.Msg) (runModel, tea.Cmd) {
 				return m, func() tea.Msg { return backToListMsg{} }
 			}
 		}
+
+	case tea.WindowSizeMsg:
+		m.vp.Width = clampMin(msg.Width-4, 10)
+		m.vp.Height = clampMin(msg.Height-9, 3)
+		m.vp.SetContent(strings.Join(m.lines, "\n"))
+		return m, nil
 	}
 
 	var cmd tea.Cmd

@@ -28,6 +28,19 @@ func makeSnaps(t *testing.T, names ...string) config.Sync {
 	return config.Sync{Name: "x", Host: "h", User: "u", RemotePath: "/r", LocalPath: root}
 }
 
+func TestSnapsResizesTable(t *testing.T) {
+	e := makeSnaps(t)
+	m := newSnaps(e, config.Defaults{}, &execx.FakeRunner{}, nonBtrfsFS)
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	if m.tbl.Width() != 116 {
+		t.Fatalf("tbl.Width() = %d, want 116", m.tbl.Width())
+	}
+	// SetHeight(30) sets viewport.Height = 30 - 1 (header row), so Height() returns 29.
+	if m.tbl.Height() != 29 {
+		t.Fatalf("tbl.Height() = %d, want 29 (SetHeight(30) minus 1 header line)", m.tbl.Height())
+	}
+}
+
 func TestSnapsReloadDescending(t *testing.T) {
 	e := makeSnaps(t, "2026-06-23_030000", "2026-06-24_030000")
 	m := newSnaps(e, config.Defaults{}, &execx.FakeRunner{}, nonBtrfsFS)

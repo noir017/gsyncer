@@ -114,6 +114,17 @@ func TestRunEnterAfterDoneEmitsBack(t *testing.T) {
 	}
 }
 
+func TestRunResizesViewport(t *testing.T) {
+	m := newTestRun()
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	if m.vp.Width != 116 {
+		t.Fatalf("vp.Width = %d, want 116", m.vp.Width)
+	}
+	if m.vp.Height != 31 {
+		t.Fatalf("vp.Height = %d, want 31", m.vp.Height)
+	}
+}
+
 func TestSummarize(t *testing.T) {
 	got := summarize([]syncer.Result{{OK: true}, {OK: false}}, 3400*time.Millisecond)
 	if got != "成功 1 / 失败 1 / 耗时 3.4s" {

@@ -83,6 +83,27 @@ func TestLoadOrEmptyMissingFile(t *testing.T) {
 	}
 }
 
+func TestAppAppliesSizeOnSnapsEntry(t *testing.T) {
+	e := makeSnaps(t, "2026-06-24_030000")
+	cfg := &config.Config{Sync: []config.Sync{e}}
+	app := newTestApp(cfg, "x")
+	// Set a known size on the app before entering the snaps screen.
+	model, _ := app.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	app = model.(*App)
+	if app.width != 120 {
+		t.Fatalf("app.width = %d, want 120", app.width)
+	}
+	// Now open the snaps screen; the sub-model should be pre-sized.
+	model, _ = app.Update(openSnapsMsg{idx: 0})
+	app = model.(*App)
+	if app.screen != screenSnaps {
+		t.Fatalf("screen = %d, want screenSnaps", app.screen)
+	}
+	if app.snaps.tbl.Width() != 116 {
+		t.Fatalf("snaps tbl.Width() = %d, want 116", app.snaps.tbl.Width())
+	}
+}
+
 func syncerResultFor(name string, ok bool) syncer.Result { return syncer.Result{Name: name, OK: ok} }
 
 func TestAppRunDoneUpdatesListDots(t *testing.T) {
