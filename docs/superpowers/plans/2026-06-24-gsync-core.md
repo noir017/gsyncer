@@ -1187,8 +1187,6 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
-
-	"gsync/internal/execx"
 )
 
 // TSLayout is the timestamp format used for snapshot directory names.
@@ -1243,11 +1241,11 @@ func List(root string) ([]time.Time, error) {
 	return out, nil
 }
 
-// Detect is defined in btrfs.go (Task 9) once both backends exist.
-var _ = execx.Real{}
+// Detect (backend selection) is added in Task 9, once both backends exist; it
+// is the only thing in this package that imports execx.
 ```
 
-> 注：`var _ = execx.Real{}` 仅为让 import 在 Task 8/9 接线前不报「imported and not used」。Task 9 写 Detect 时删除该行。
+> 注：本任务的 `snapshot.go` 不 import `execx`（`Backend` 接口与 `List` 都不需要）。`Detect` 及其对 `execx` 的依赖在 Task 9 加入。
 
 - [ ] **Step 4: 运行测试**
 
@@ -1595,14 +1593,22 @@ func (b *Btrfs) Delete(ctx context.Context, snapPath string) error {
 func (b *Btrfs) List(root string) ([]time.Time, error) { return List(root) }
 ```
 
-- [ ] **Step 4: 在 snapshot.go 接线 Detect（删除占位行）**
+- [ ] **Step 4: 在 snapshot.go 接线 Detect（新增 execx import + Detect）**
 
-In `gsync/internal/snapshot/snapshot.go`, replace the trailing placeholder:
+In `gsync/internal/snapshot/snapshot.go`, add the execx import to the import block:
 ```go
-// Detect is defined in btrfs.go (Task 9) once both backends exist.
-var _ = execx.Real{}
+	"syscall"
+	"time"
+
+	"gsync/internal/execx"
+)
 ```
-with:
+and replace the trailing placeholder comment:
+```go
+// Detect (backend selection) is added in Task 9, once both backends exist; it
+// is the only thing in this package that imports execx.
+```
+with the Detect function:
 ```go
 // Detect chooses btrfs when root is on a btrfs filesystem and the `btrfs`
 // command is available; otherwise it returns the hardlink backend.
