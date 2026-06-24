@@ -165,16 +165,23 @@ func cmdPrune(argv []string) int {
 	defer rl.Close()
 
 	entries := selectEntries(cfg.Sync, *name, "")
-	fail := false
+	var results []syncer.Result
 	for _, s := range entries {
 		r := syncer.PruneOne(context.Background(), s, cfg.Defaults, realDeps(rl))
 		fmt.Printf("%s: pruned %d (mode %s)\n", r.Name, r.Pruned, r.Mode)
-		if !r.OK {
-			fail = true
-		}
+		results = append(results, r)
 	}
-	if fail {
-		return 1
+
+	line := summaryLine(results, time.Since(start))
+	rl.Infof("%s", line)
+	_ = logx.AppendSummary(logDir, start.Format("2006-01-02 15:04:05")+" "+line)
+	_ = logx.Cleanup(logDir, cfg.Log.KeepDays, cfg.Log.KeepCount, time.Now())
+	fmt.Println(line)
+
+	for _, r := range results {
+		if !r.OK {
+			return 1
+		}
 	}
 	return 0
 }

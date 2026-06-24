@@ -75,6 +75,28 @@ func TestValidateRejectsMissingField(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsNegativeDefaultRetention(t *testing.T) {
+	c := &Config{
+		Defaults: Defaults{Retention: Retention{Recent: -1}},
+	}
+	if err := c.Validate(); err == nil {
+		t.Fatal("expected error for negative defaults retention")
+	}
+}
+
+func TestValidateRejectsNegativeEntryRetention(t *testing.T) {
+	neg := -1
+	c := &Config{
+		Sync: []Sync{{
+			Name: "x", Host: "h", User: "u", RemotePath: "/r", LocalPath: "/l",
+			Retention: &RetentionOverride{Monthly: &neg},
+		}},
+	}
+	if err := c.Validate(); err == nil {
+		t.Fatal("expected error for negative per-entry retention override")
+	}
+}
+
 func TestSaveRoundTrip(t *testing.T) {
 	key := writeKey(t)
 	dir := t.TempDir()
