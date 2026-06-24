@@ -1,0 +1,4 @@
+/gsync
+/logs/
+/config.toml
+*.test
