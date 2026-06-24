@@ -110,4 +110,41 @@ func TestListRefreshHardlinkBackend(t *testing.T) {
 	}
 }
 
+func TestListDeleteKeyEmitsDeleteMsg(t *testing.T) {
+	m := newList(twoEntryCfg(), &execx.FakeRunner{}, nonBtrfsFS)
+	m, _ = m.Update(keyMsg("j")) // cursor -> 1
+	_, cmd := m.Update(keyMsg("d"))
+	if cmd == nil {
+		t.Fatal("expected delete cmd")
+	}
+	msg := cmd()
+	dm, ok := msg.(deleteEntryMsg)
+	if !ok || dm.idx != 1 {
+		t.Fatalf("got %#v, want deleteEntryMsg{idx:1}", msg)
+	}
+}
+
+func TestListQuitKeysEmitQuit(t *testing.T) {
+	cases := []struct {
+		name string
+		key  tea.KeyMsg
+	}{
+		{"q", keyMsg("q")},
+		{"esc", tea.KeyMsg{Type: tea.KeyEsc}},
+		{"ctrl+c", tea.KeyMsg{Type: tea.KeyCtrlC}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newList(twoEntryCfg(), &execx.FakeRunner{}, nonBtrfsFS)
+			_, cmd := m.Update(tc.key)
+			if cmd == nil {
+				t.Fatal("expected quit cmd")
+			}
+			if _, ok := cmd().(quitMsg); !ok {
+				t.Fatalf("key %q: expected quitMsg", tc.name)
+			}
+		})
+	}
+}
+
 var _ = snapshot.RealFSType // keep import if unused elsewhere

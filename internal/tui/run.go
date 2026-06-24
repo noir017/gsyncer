@@ -46,14 +46,14 @@ type runModel struct {
 	fsType snapshot.FSTypeFunc
 	now    func() time.Time
 
-	vp        viewport.Model
-	lines     []string
-	running   bool
-	cancelled bool
-	cancel    context.CancelFunc
-	ch        chan tea.Msg
-	results   []syncer.Result
-	title     string
+	vp         viewport.Model
+	lines      []string
+	running    bool
+	cancelling bool
+	cancel     context.CancelFunc
+	ch         chan tea.Msg
+	results    []syncer.Result
+	title      string
 }
 
 func newRun(cfg *config.Config, logDir string, runner execx.Runner, fsType snapshot.FSTypeFunc, now func() time.Time) runModel {
@@ -68,7 +68,7 @@ func (m *runModel) start(entries []config.Sync, dryRun bool) tea.Cmd {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	m.running = true
-	m.cancelled = false
+	m.cancelling = false
 	m.lines = nil
 	m.results = nil
 	m.ch = make(chan tea.Msg, 64)
@@ -110,6 +110,7 @@ func (m runModel) Update(msg tea.Msg) (runModel, tea.Cmd) {
 
 	case runDoneMsg:
 		m.running = false
+		m.cancelling = false
 		m.results = msg.results
 		summary := "✔ " + summarize(msg.results, msg.dur)
 		if msg.cancelled {
@@ -123,14 +124,14 @@ func (m runModel) Update(msg tea.Msg) (runModel, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c":
-			if m.running {
+			if m.running && !m.cancelling {
 				if m.cancel != nil {
 					m.cancel()
 				}
-				m.running = false
-				m.cancelled = true
+				m.cancelling = true
 				m.lines = append(m.lines, "⚠ 已请求取消…")
 				m.vp.SetContent(strings.Join(m.lines, "\n"))
+				m.vp.GotoBottom()
 				return m, waitForMsg(m.ch) // keep draining until runDoneMsg
 			}
 			return m, func() tea.Msg { return quitMsg{} }
@@ -150,7 +151,9 @@ func (m runModel) View() string {
 	var b strings.Builder
 	b.WriteString(styleTitle.Render(m.title) + "\n\n")
 	b.WriteString(styleBox.Render(m.vp.View()) + "\n")
-	if m.running {
+	if m.cancelling {
+		b.WriteString(styleHelp.Render("(取消中) ctrl+c 退出"))
+	} else if m.running {
 		b.WriteString(styleHelp.Render("(运行中) ctrl+c 中断"))
 	} else {
 		b.WriteString(styleHelp.Render("(完成) enter/esc 返回，ctrl+c 退出"))
