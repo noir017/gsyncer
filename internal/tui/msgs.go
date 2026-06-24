@@ -3,6 +3,7 @@ package tui
 
 import (
 	"fmt"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -30,6 +31,7 @@ type logLineMsg struct {
 type runDoneMsg struct {
 	results   []syncer.Result
 	cancelled bool
+	dur       time.Duration
 }
 
 // editEntryMsg asks App to open the form. idx == -1 means a new entry.
