@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -35,9 +36,12 @@ type snapsModel struct {
 	status  string
 	backend string
 
-	confirmDelete bool
-	restoring     bool
-	restoreInput  textinput.Model
+	confirmDelete   bool
+	restoring       bool
+	restoreInput    textinput.Model
+	confirmOverwrite bool
+	pendingSrc      string
+	pendingDst      string
 }
 
 func newSnaps(entry config.Sync, defaults config.Defaults, runner execx.Runner, fsType snapshot.FSTypeFunc) snapsModel {
@@ -111,6 +115,20 @@ func (m snapsModel) Update(msg tea.Msg) (snapsModel, tea.Cmd) {
 		return m, nil
 	}
 
+	if m.confirmOverwrite {
+		if key.String() == "y" || key.String() == "Y" {
+			if _, err := m.runner.Run(context.Background(), "cp", "-a", m.pendingSrc, m.pendingDst); err != nil {
+				m.status = "恢复失败: " + err.Error()
+			} else {
+				m.status = "已恢复到 " + m.pendingDst
+			}
+		} else {
+			m.status = "已取消恢复"
+		}
+		m.confirmOverwrite = false
+		return m, nil
+	}
+
 	if m.restoring {
 		switch key.String() {
 		case "enter":
@@ -130,6 +148,14 @@ func (m snapsModel) Update(msg tea.Msg) (snapsModel, tea.Cmd) {
 				return m, nil
 			}
 			src := m.snapPath(i)
+			if _, err := os.Stat(dst); err == nil {
+				// destination exists → confirm before clobbering
+				m.pendingSrc, m.pendingDst = src, dst
+				m.confirmOverwrite = true
+				m.restoring = false
+				return m, nil
+			}
+			// does not exist (or stat error) → proceed directly
 			if _, err := m.runner.Run(context.Background(), "cp", "-a", src, dst); err != nil {
 				m.status = "恢复失败: " + err.Error()
 			} else {
@@ -190,6 +216,8 @@ func (m snapsModel) View() string {
 	b.WriteString(m.tbl.View() + "\n")
 	if m.restoring {
 		b.WriteString("\n恢复到: " + m.restoreInput.View() + styleHelp.Render("  (enter 确认, esc 取消)"))
+	} else if m.confirmOverwrite {
+		b.WriteString("\n" + styleErr.Render("目标已存在，覆盖？(y/N)"))
 	} else if m.confirmDelete {
 		b.WriteString("\n" + styleErr.Render("删除该快照？(y/N)"))
 	} else if m.status != "" {
