@@ -64,6 +64,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case openSnapsMsg:
 		a.snaps = newSnaps(a.cfg.Sync[msg.idx], a.cfg.Defaults, a.runner, a.fsType)
+		if a.width > 0 {
+			a.snaps, _ = a.snaps.Update(tea.WindowSizeMsg{Width: a.width, Height: a.height})
+		}
 		a.screen = screenSnaps
 		return a, a.snaps.Init()
 
@@ -74,6 +77,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case runEntriesMsg:
 		a.run = newRun(a.cfg, a.logDir, a.runner, a.fsType, a.now)
+		if a.width > 0 {
+			a.run, _ = a.run.Update(tea.WindowSizeMsg{Width: a.width, Height: a.height})
+		}
 		a.screen = screenRun
 		return a, a.run.start(msg.entries, msg.dryRun)
 
