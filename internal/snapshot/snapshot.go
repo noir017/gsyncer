@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
+
+	"gsync/internal/execx"
 )
 
 // TSLayout is the timestamp format used for snapshot directory names.
@@ -63,5 +65,13 @@ func List(root string) ([]time.Time, error) {
 	return out, nil
 }
 
-// Detect (backend selection) is added in Task 9, once both backends exist; it
-// is the only thing in this package that imports execx.
+// Detect chooses btrfs when root is on a btrfs filesystem and the `btrfs`
+// command is available; otherwise it returns the hardlink backend.
+func Detect(ctx context.Context, root string, r execx.Runner, fsType FSTypeFunc) Backend {
+	if magic, err := fsType(root); err == nil && magic == BtrfsMagic {
+		if _, err := r.Run(ctx, "btrfs", "--version"); err == nil {
+			return NewBtrfs(r)
+		}
+	}
+	return NewHardlink(r)
+}
