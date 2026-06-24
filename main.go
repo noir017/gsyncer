@@ -14,6 +14,7 @@ import (
 	"gsync/internal/logx"
 	"gsync/internal/snapshot"
 	"gsync/internal/syncer"
+	"gsync/internal/tui"
 )
 
 const version = "0.1.0"
@@ -28,8 +29,13 @@ func exeDir() string {
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "TUI 尚未实现（见后续计划）。可用子命令: sync | list | snapshots | prune | version")
-		os.Exit(2)
+		logDir := filepath.Join(exeDir(), "logs")
+		if err := tui.Run(resolveConfigPath("", exeDir()), logDir,
+			execx.Real{}, snapshot.RealFSType, time.Now); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
 	}
 	switch os.Args[1] {
 	case "version":
