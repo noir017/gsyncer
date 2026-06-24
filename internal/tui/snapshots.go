@@ -83,6 +83,12 @@ func (m snapsModel) snapPath(i int) string {
 func (m snapsModel) Init() tea.Cmd { return nil }
 
 func (m snapsModel) Update(msg tea.Msg) (snapsModel, tea.Cmd) {
+	if sz, ok := msg.(tea.WindowSizeMsg); ok {
+		m.tbl.SetWidth(clampMin(sz.Width-4, 20))
+		m.tbl.SetHeight(clampMin(sz.Height-10, 3))
+		return m, nil
+	}
+
 	key, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return m, nil
