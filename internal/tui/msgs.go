@@ -37,6 +37,9 @@ type runDoneMsg struct {
 // editEntryMsg asks App to open the form. idx == -1 means a new entry.
 type editEntryMsg struct{ idx int }
 
+// copyEntryMsg asks App to open the form as a new entry pre-filled from entry idx.
+type copyEntryMsg struct{ idx int }
+
 // openSnapsMsg asks App to open the snapshot browser for entry idx.
 type openSnapsMsg struct{ idx int }
 

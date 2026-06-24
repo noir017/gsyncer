@@ -101,6 +101,11 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 			idx := m.cursor
 			return m, func() tea.Msg { return editEntryMsg{idx: idx} }
 		}
+	case "c":
+		if n > 0 {
+			idx := m.cursor
+			return m, func() tea.Msg { return copyEntryMsg{idx: idx} }
+		}
 	case "d":
 		if n > 0 {
 			idx := m.cursor
