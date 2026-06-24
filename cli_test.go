@@ -43,7 +43,7 @@ func TestSummaryLine(t *testing.T) {
 	}
 	got := summaryLine(res, 3*time.Second)
 	if !strings.Contains(got, "成功 1") || !strings.Contains(got, "失败 1") ||
-		!strings.Contains(got, "3") {
+		!strings.Contains(got, "3.0s") {
 		t.Fatalf("summary = %q", got)
 	}
 }
