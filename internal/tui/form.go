@@ -66,7 +66,7 @@ func newForm(cfg *config.Config, cfgPath string, origIdx int) formModel {
 	}
 	m.ignore = textarea.New()
 	m.ignore.SetWidth(40)
-	m.ignore.SetHeight(4)
+	m.ignore.SetHeight(6)
 	m.ret = make([]textinput.Model, 4)
 	for i := range m.ret {
 		ti := textinput.New()
@@ -82,6 +82,12 @@ func newForm(cfg *config.Config, cfgPath string, origIdx int) formModel {
 	} else {
 		// new entry: seed sensible defaults so not every field is manual.
 		m.inputs[fPort].SetValue(strconv.Itoa(defaultPort(cfg.Defaults)))
+		m.ignore.SetValue(strings.Join(defaultIgnore, "\n"))
+		r := defaultRetention(cfg.Defaults)
+		m.ret[0].SetValue(strconv.Itoa(r.Recent))
+		m.ret[1].SetValue(strconv.Itoa(r.Monthly))
+		m.ret[2].SetValue(strconv.Itoa(r.Semiannual))
+		m.ret[3].SetValue(strconv.Itoa(r.Yearly))
 		// focus the quick-paste field first; the paste workflow is the fast path.
 		m.focus = focusPaste
 	}
@@ -117,6 +123,26 @@ func defaultPort(d config.Defaults) int {
 		return d.SSHPort
 	}
 	return 22
+}
+
+// defaultRetention resolves the retention values to pre-fill for a new entry:
+// the configured defaults, or a sensible GFS fallback when none are set.
+func defaultRetention(d config.Defaults) config.Retention {
+	if d.Retention != (config.Retention{}) {
+		return d.Retention
+	}
+	return config.Retention{Recent: 7, Monthly: 6, Semiannual: 2, Yearly: 2}
+}
+
+// defaultIgnore are the gitignore-style patterns pre-filled for a new entry,
+// covering the most common build/cache/VCS noise.
+var defaultIgnore = []string{
+	"__pycache__/",
+	"*.pyc",
+	"node_modules/",
+	".git/",
+	".venv/",
+	".DS_Store",
 }
 
 // newFormCopy builds a new (unsaved) entry pre-filled from an existing one,
@@ -418,15 +444,33 @@ func (m formModel) Update(msg tea.Msg) (formModel, tea.Cmd) {
 				return m, nil
 			}
 			return m, func() tea.Msg { return quitMsg{} }
-		case "tab", "down":
+		case "tab":
 			m.focus = (m.focus + 1) % m.focusCount()
 			m.applyFocus()
 			return m, nil
-		case "shift+tab", "up":
+		case "shift+tab":
 			n := m.focusCount()
 			m.focus = (m.focus - 1 + n) % n
 			m.applyFocus()
 			return m, nil
+		case "down":
+			// inside the multi-line ignore box, ↓ moves the cursor down a
+			// line; only when already on the last line does it jump to the
+			// next field.
+			if m.focus != focusIgnore || m.ignore.Line() >= m.ignore.LineCount()-1 {
+				m.focus = (m.focus + 1) % m.focusCount()
+				m.applyFocus()
+				return m, nil
+			}
+		case "up":
+			// symmetric to ↓: ↑ on the first line of the ignore box leaves it
+			// for the previous field.
+			if m.focus != focusIgnore || m.ignore.Line() <= 0 {
+				n := m.focusCount()
+				m.focus = (m.focus - 1 + n) % n
+				m.applyFocus()
+				return m, nil
+			}
 		case "enter":
 			if m.focus == focusPaste {
 				m.applyPaste()

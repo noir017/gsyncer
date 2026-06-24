@@ -2,6 +2,7 @@ package tui
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"gsync/internal/config"
@@ -116,6 +117,112 @@ func TestFormNewSeedsDefaultPort(t *testing.T) {
 	m2 := newForm(&config.Config{}, "x", -1)
 	if got := m2.inputs[fPort].Value(); got != "22" {
 		t.Fatalf("new entry port = %q, want 22", got)
+	}
+}
+
+func TestFormNewSeedsRetentionAndIgnore(t *testing.T) {
+	// no configured defaults -> GFS fallback
+	m := newForm(&config.Config{}, "x", -1)
+	for i, want := range []string{"7", "6", "2", "2"} {
+		if got := m.ret[i].Value(); got != want {
+			t.Fatalf("ret[%d] = %q, want %q", i, got, want)
+		}
+	}
+	if !strings.Contains(m.ignore.Value(), "__pycache__/") ||
+		!strings.Contains(m.ignore.Value(), "node_modules/") {
+		t.Fatalf("ignore defaults missing: %q", m.ignore.Value())
+	}
+	// the seeded override must survive round-trip into a config.Sync
+	s, err := m.toSync()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Retention == nil || s.Retention.Recent == nil || *s.Retention.Recent != 7 {
+		t.Fatalf("seeded retention not applied: %+v", s.Retention)
+	}
+}
+
+func TestFormNewSeedsRetentionFromConfigDefaults(t *testing.T) {
+	cfg := &config.Config{Defaults: config.Defaults{
+		Retention: config.Retention{Recent: 3, Monthly: 4, Semiannual: 5, Yearly: 6},
+	}}
+	m := newForm(cfg, "x", -1)
+	for i, want := range []string{"3", "4", "5", "6"} {
+		if got := m.ret[i].Value(); got != want {
+			t.Fatalf("ret[%d] = %q, want %q (should mirror config defaults)", i, got, want)
+		}
+	}
+}
+
+func TestFormEditDoesNotSeedDefaults(t *testing.T) {
+	// editing an existing entry must not inject defaults over its real values
+	m := newForm(baseCfg(), "x", 0)
+	if m.ignore.Value() != "" {
+		t.Fatalf("edit form must not seed ignore defaults, got %q", m.ignore.Value())
+	}
+	if m.ret[0].Value() != "" {
+		t.Fatalf("edit form must not seed retention defaults, got %q", m.ret[0].Value())
+	}
+}
+
+func TestFormIgnoreArrowsMoveCursorThenLeaveAtBoundary(t *testing.T) {
+	m := newForm(&config.Config{}, "x", -1) // 6 default ignore lines
+	m.focus = focusIgnore
+	m.applyFocus()
+
+	// park the cursor on the top line
+	for i := 0; i < 20; i++ {
+		m.ignore.CursorUp()
+	}
+	if m.ignore.Line() != 0 {
+		t.Fatalf("setup: cursor not on top line, got %d", m.ignore.Line())
+	}
+
+	// ↓ from a non-last line moves the cursor, focus stays in the box
+	m, _ = m.Update(keyMsg("down"))
+	if m.focus != focusIgnore {
+		t.Fatalf("down (mid box) changed focus to %d", m.focus)
+	}
+	if m.ignore.Line() != 1 {
+		t.Fatalf("down should move cursor to line 1, got %d", m.ignore.Line())
+	}
+
+	// ↑ back to the top line stays in the box
+	m, _ = m.Update(keyMsg("up"))
+	if m.focus != focusIgnore || m.ignore.Line() != 0 {
+		t.Fatalf("up should return cursor to top, focus=%d line=%d", m.focus, m.ignore.Line())
+	}
+
+	// ↑ on the top line leaves the box for the previous field
+	m, _ = m.Update(keyMsg("up"))
+	if m.focus == focusIgnore {
+		t.Fatal("up on first line should leave the ignore box")
+	}
+}
+
+func TestFormIgnoreDownOnLastLineLeavesBox(t *testing.T) {
+	m := newForm(&config.Config{}, "x", -1)
+	m.focus = focusIgnore
+	m.applyFocus()
+	for i := 0; i < 20; i++ {
+		m.ignore.CursorDown()
+	}
+	if m.ignore.Line() != m.ignore.LineCount()-1 {
+		t.Fatalf("setup: cursor not on last line, got %d", m.ignore.Line())
+	}
+	m, _ = m.Update(keyMsg("down"))
+	if m.focus == focusIgnore {
+		t.Fatal("down on last line should leave the ignore box")
+	}
+}
+
+func TestFormArrowsNavigateOtherFields(t *testing.T) {
+	m := newForm(baseCfg(), "x", 0)
+	m.focus = fName
+	m.applyFocus()
+	m, _ = m.Update(keyMsg("down"))
+	if m.focus != fHost {
+		t.Fatalf("down on name field should move to host (%d), got %d", fHost, m.focus)
 	}
 }
 
