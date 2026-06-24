@@ -81,6 +81,25 @@ func Save(path string, c *Config) error {
 	return toml.NewEncoder(f).Encode(c)
 }
 
+// checkRetention returns an error if any retention field is negative.
+func checkRetention(ctx string, r Retention) error {
+	fields := []struct {
+		name string
+		val  int
+	}{
+		{"recent", r.Recent},
+		{"monthly", r.Monthly},
+		{"semiannual", r.Semiannual},
+		{"yearly", r.Yearly},
+	}
+	for _, f := range fields {
+		if f.val < 0 {
+			return fmt.Errorf("%s: retention %s must be >= 0", ctx, f.name)
+		}
+	}
+	return nil
+}
+
 // Validate checks required fields, name uniqueness, and identity existence.
 func (c *Config) Validate() error {
 	seen := map[string]bool{}
@@ -107,6 +126,14 @@ func (c *Config) Validate() error {
 			if _, err := os.Stat(ExpandHome(s.Identity)); err != nil {
 				return fmt.Errorf("sync %q: identity not accessible: %w", s.Name, err)
 			}
+		}
+	}
+	if err := checkRetention("defaults", c.Defaults.Retention); err != nil {
+		return err
+	}
+	for _, s := range c.Sync {
+		if err := checkRetention(fmt.Sprintf("sync %q", s.Name), s.EffectiveRetention(c.Defaults)); err != nil {
+			return err
 		}
 	}
 	return nil
