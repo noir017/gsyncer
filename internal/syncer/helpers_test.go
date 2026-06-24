@@ -1,0 +1,78 @@
+package syncer
+
+import (
+	"strings"
+	"testing"
+
+	"gsync/internal/config"
+)
+
+func TestParseStats(t *testing.T) {
+	out := `
+Number of files: 100
+Number of regular files transferred: 12
+Total file size: 999 bytes
+Total transferred file size: 3456 bytes
+`
+	files, bytes := parseStats(out)
+	if files != 12 || bytes != 3456 {
+		t.Fatalf("files=%d bytes=%d", files, bytes)
+	}
+}
+
+func TestSSHOptArg(t *testing.T) {
+	got := sshOptArg("/k", 2222, false)
+	if !strings.Contains(got, "ssh -p 2222") ||
+		!strings.Contains(got, "-i /k") ||
+		!strings.Contains(got, "BatchMode=yes") ||
+		!strings.Contains(got, "StrictHostKeyChecking=accept-new") {
+		t.Fatalf("opt arg = %q", got)
+	}
+	strict := sshOptArg("/k", 22, true)
+	if !strings.Contains(strict, "StrictHostKeyChecking=yes") {
+		t.Fatalf("strict opt = %q", strict)
+	}
+}
+
+func TestSSHCmdArgs(t *testing.T) {
+	args := sshCmdArgs("/k", 22, false, "u", "h", "command -v rsync")
+	j := strings.Join(args, " ")
+	if !strings.Contains(j, "-p 22") || !strings.Contains(j, "-i /k") ||
+		!strings.HasSuffix(j, "u@h command -v rsync") {
+		t.Fatalf("cmd args = %v", args)
+	}
+}
+
+func TestBuildRsyncArgs(t *testing.T) {
+	s := config.Sync{
+		User: "u", Host: "h", RemotePath: "/src", Ignore: []string{"*.log"},
+	}
+	args := buildRsyncArgs(s, 22, "/local/current", false)
+	j := strings.Join(args, " ")
+	if !strings.Contains(j, "-a") || !strings.Contains(j, "--delete") ||
+		!strings.Contains(j, "--info=stats2") {
+		t.Fatalf("missing base flags: %v", args)
+	}
+	if !strings.Contains(j, "--filter - *.log") {
+		t.Fatalf("missing filter: %v", args)
+	}
+	if !strings.Contains(j, "u@h:/src/") || !strings.Contains(j, "/local/current/") {
+		t.Fatalf("missing src/dst with trailing slash: %v", args)
+	}
+	if strings.Contains(j, " -n") {
+		t.Fatalf("dry-run should be off: %v", args)
+	}
+	dry := buildRsyncArgs(s, 22, "/local/current", true)
+	if !contains(dry, "-n") {
+		t.Fatalf("dry-run flag missing: %v", dry)
+	}
+}
+
+func contains(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
