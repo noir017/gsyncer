@@ -52,7 +52,7 @@ recent = 14
 		t.Fatalf("port = %d, want 2222", got)
 	}
 	r := s.EffectiveRetention(c.Defaults)
-	if r.Recent != 14 || r.Monthly != 6 || r.Yearly != 3 {
+	if r.Recent != 14 || r.Monthly != 6 || r.Semiannual != 4 || r.Yearly != 3 {
 		t.Fatalf("retention = %+v", r)
 	}
 }

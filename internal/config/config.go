@@ -92,12 +92,15 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("sync[%d]: duplicate name %q", i, s.Name)
 		}
 		seen[s.Name] = true
-		for field, val := range map[string]string{
-			"host": s.Host, "user": s.User,
-			"remote_path": s.RemotePath, "local_path": s.LocalPath,
-		} {
-			if val == "" {
-				return fmt.Errorf("sync %q: %s is required", s.Name, field)
+		required := []struct{ name, val string }{
+			{"host", s.Host},
+			{"user", s.User},
+			{"remote_path", s.RemotePath},
+			{"local_path", s.LocalPath},
+		}
+		for _, f := range required {
+			if f.val == "" {
+				return fmt.Errorf("sync %q: %s is required", s.Name, f.name)
 			}
 		}
 		if s.Identity != "" {
