@@ -125,7 +125,7 @@ func (m snapsModel) Update(msg tea.Msg) (snapsModel, tea.Cmd) {
 
 	if m.confirmPrune {
 		if key.String() == "y" || key.String() == "Y" {
-			res := syncer.PruneOne(context.Background(), m.entry, m.defaults, m.pruneDeps())
+			res := syncer.PruneOne(context.Background(), m.entry, m.defaults, m.pruneDeps(), false)
 			if res.Err != nil {
 				m.status = "清理失败: " + res.Err.Error()
 			} else {
