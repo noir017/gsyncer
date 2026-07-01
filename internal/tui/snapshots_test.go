@@ -8,8 +8,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"gsync/internal/config"
-	"gsync/internal/execx"
+	"gsyncer/internal/config"
+	"gsyncer/internal/execx"
 )
 
 // makeSnaps creates root/snapshots/<ts> dirs and returns the entry.

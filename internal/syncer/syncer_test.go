@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"gsync/internal/config"
-	"gsync/internal/execx"
-	"gsync/internal/snapshot"
+	"gsyncer/internal/config"
+	"gsyncer/internal/execx"
+	"gsyncer/internal/snapshot"
 )
 
 type captureLog struct{ lines []string }

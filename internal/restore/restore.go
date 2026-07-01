@@ -1,6 +1,6 @@
 // Package restore copies a snapshot back out to a destination directory. The
 // logic is factored here (rather than living only in the TUI) so it is usable
-// headlessly from `gsync restore` in scripts and disaster-recovery scenarios.
+// headlessly from `gsyncer restore` in scripts and disaster-recovery scenarios.
 package restore
 
 import (
@@ -11,8 +11,8 @@ import (
 	"sort"
 	"time"
 
-	"gsync/internal/execx"
-	"gsync/internal/snapshot"
+	"gsyncer/internal/execx"
+	"gsyncer/internal/snapshot"
 )
 
 // SelectTime chooses one snapshot timestamp. Exactly one selector must be set:

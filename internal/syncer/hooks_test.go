@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"gsync/internal/config"
-	"gsync/internal/execx"
+	"gsyncer/internal/config"
+	"gsyncer/internal/execx"
 )
 
 // baseHandler returns a FakeRunner handler that makes the happy path succeed.

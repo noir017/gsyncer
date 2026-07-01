@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"gsync/internal/config"
-	"gsync/internal/execx"
-	"gsync/internal/syncer"
+	"gsyncer/internal/config"
+	"gsyncer/internal/execx"
+	"gsyncer/internal/syncer"
 )
 
 func sampleResults() ([]syncer.Result, []config.Sync) {

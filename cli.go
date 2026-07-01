@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"gsync/internal/config"
-	"gsync/internal/syncer"
+	"gsyncer/internal/config"
+	"gsyncer/internal/syncer"
 )
 
 // resolveConfigPath returns the explicit flag value or exeDir/config.toml.

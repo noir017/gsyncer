@@ -1,4 +1,4 @@
-// Package tui implements the interactive terminal UI for gsync.
+// Package tui implements the interactive terminal UI for gsyncer.
 package tui
 
 import (
@@ -7,8 +7,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"gsync/internal/config"
-	"gsync/internal/syncer"
+	"gsyncer/internal/config"
+	"gsyncer/internal/syncer"
 )
 
 // screen identifies which sub-model is currently active.

@@ -5,9 +5,9 @@ import (
 	"strconv"
 	"strings"
 
-	"gsync/internal/config"
-	"gsync/internal/execx"
-	"gsync/internal/ignore"
+	"gsyncer/internal/config"
+	"gsyncer/internal/execx"
+	"gsyncer/internal/ignore"
 )
 
 const (
@@ -101,7 +101,7 @@ func ensureTrailingSlash(p string) string {
 // partialDir is the in-transfer staging directory (under current/) that rsync
 // --partial-dir uses. Keeping half-written files here instead of the current/
 // root means an interrupted large file never pollutes current/ or a snapshot.
-const partialDir = ".gsync-partial"
+const partialDir = ".gsyncer-partial"
 
 // buildRsyncArgs assembles the full rsync argument list for one entry. The -s
 // (--protect-args) flag stops the remote shell from a second round of

@@ -13,10 +13,10 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"gsync/internal/config"
-	"gsync/internal/execx"
-	"gsync/internal/snapshot"
-	"gsync/internal/syncer"
+	"gsyncer/internal/config"
+	"gsyncer/internal/execx"
+	"gsyncer/internal/snapshot"
+	"gsyncer/internal/syncer"
 )
 
 // nopLogger discards syncer log output (used for prune from the snapshot screen).

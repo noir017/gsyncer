@@ -10,7 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"gsync/internal/config"
+	"gsyncer/internal/config"
 )
 
 // text input indices.

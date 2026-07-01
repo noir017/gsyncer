@@ -1,4 +1,4 @@
-设计：gsync（暂名）—— 基于 rsync/ssh 的多服务器拉取+快照工具
+设计：gsyncer（暂名）—— 基于 rsync/ssh 的多服务器拉取+快照工具
 
 1. 总体架构与模块（Go，零依赖静态单文件）
 
@@ -60,14 +60,14 @@ recent = 14
 5. CLI 与 TUI
 
 CLI（cron 用，无需确认）
-gsync                      进入 TUI（人工调试）
-gsync sync                 同步全部条目（cron 默认）
-gsync sync --name web1-www 仅该条目
-gsync sync --server 1.2.3.4 仅该服务器全部条目
-gsync sync --dry-run       rsync -n，不建快照
-gsync list                 打印条目
-gsync snapshots --name X   列出快照（非 TUI）
-gsync prune [--name X]     仅跑保留清理
+gsyncer                      进入 TUI（人工调试）
+gsyncer sync                 同步全部条目（cron 默认）
+gsyncer sync --name web1-www 仅该条目
+gsyncer sync --server 1.2.3.4 仅该服务器全部条目
+gsyncer sync --dry-run       rsync -n，不建快照
+gsyncer list                 打印条目
+gsyncer snapshots --name X   列出快照（非 TUI）
+gsyncer prune [--name X]     仅跑保留清理
 全局: --config PATH  --verbose  --log-level
 默认 config 与 logs 都定位到「可执行文件所在目录」（os.Executable()）。
 

@@ -8,9 +8,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"gsync/internal/config"
-	"gsync/internal/execx"
-	"gsync/internal/syncer"
+	"gsyncer/internal/config"
+	"gsyncer/internal/execx"
+	"gsyncer/internal/syncer"
 )
 
 // fillRun resizes to a small viewport and pushes enough lines to overflow it.
