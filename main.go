@@ -48,7 +48,10 @@ func usage(w io.Writer) {
   gsync sync [flags]          同步条目 (-name -server -dry-run -config)
   gsync list [-config path]   列出已配置的条目
   gsync snapshots -name N     列出某条目的快照 (-config)
-  gsync prune [flags]         按保留策略清理快照 (-name -config)
+  gsync status [flags]        各条目快照健康度 (-json -stale-hours -config)
+  gsync restore -name N       恢复快照到目录 (-at|-latest -to -force -config)
+  gsync prune [flags]         按保留策略清理快照 (-name -dry-run -config)
+  gsync check [-config path]  只校验配置，不同步
   gsync init [-config -force] 在默认位置写入一份带注释的示例配置
   gsync version               打印版本
   gsync help                  显示本帮助
