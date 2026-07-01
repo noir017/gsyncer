@@ -189,7 +189,7 @@ gsync version                    # 版本号
 1. **预检**：检查本地 `rsync` 是否可用（远程 `rsync` 不再单独探测，省一次 ssh 握手；若远程缺失，rsync 自身会以 127/"command not found" 失败并给出安装提示）。
 2. **拉取**：`rsync -a --delete` 把 `user@host:remote_path/` 同步到本地 `local_path/current/`，并应用忽略规则。传输恒带 `--partial`（配合 `--partial-dir=.gsync-partial` 断点续传、半成品不落入 `current/`）与 `--numeric-ids`（按数字保留 uid/gid）；`compress` 开启时附加 `-z`。
 3. **快照**：把 `current/` 快照到 `local_path/snapshots/<时间戳>/`
-   - 默认用**硬链接**后端：未改动的文件与上一份共享 inode，几乎不额外占空间；
+   - 默认用**硬链接**后端：未改动的文件与上一份共享 inode，几乎不额外占空间；在支持 reflink 的 CoW 文件系统（如 xfs reflink、bcachefs）上自动升级为 **reflink** 拷贝——每份快照有独立 inode、数据块按需写时复制，既省空间又不会因就地改写 `current/` 里的文件而牵连旧快照（run 汇总里模式会显示 `reflink`）；
    - 若 `local_path` 在 btrfs 上且系统有 `btrfs` 命令，则用 **btrfs** 子卷快照。
 4. **清理**：按 GFS 保留策略删除超出范围的旧快照。
 
