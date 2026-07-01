@@ -24,13 +24,19 @@ func (t teeLogger) Infof(f string, x ...any)  { t.a.Infof(f, x...); t.b.Infof(f,
 func (t teeLogger) Errorf(f string, x ...any) { t.a.Errorf(f, x...); t.b.Errorf(f, x...) }
 
 func summarize(results []syncer.Result, dur time.Duration) string {
-	ok, fail := 0, 0
+	ok, fail, skip := 0, 0, 0
 	for _, r := range results {
-		if r.OK {
+		switch {
+		case r.OK:
 			ok++
-		} else {
+		case r.Skipped:
+			skip++
+		default:
 			fail++
 		}
+	}
+	if skip > 0 {
+		return fmt.Sprintf("成功 %d / 失败 %d / 跳过 %d / 耗时 %.1fs", ok, fail, skip, dur.Seconds())
 	}
 	return fmt.Sprintf("成功 %d / 失败 %d / 耗时 %.1fs", ok, fail, dur.Seconds())
 }

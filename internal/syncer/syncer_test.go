@@ -68,6 +68,88 @@ func TestSyncOneHappyPath(t *testing.T) {
 	}
 }
 
+// rsync exit 24 (vanished source files) is a warning, not a failure: the
+// snapshot must still be taken and the entry reported OK.
+func TestSyncOneRsyncExit24Continues(t *testing.T) {
+	s := okEntry(t)
+	fr := &execx.FakeRunner{Handler: func(name string, args []string) (execx.Result, error) {
+		if name == "rsync" && len(args) == 1 && args[0] == "--version" {
+			return execx.Result{Stdout: "rsync version 3"}, nil
+		}
+		if name == "ssh" {
+			return execx.Result{Stdout: "/usr/bin/rsync"}, nil
+		}
+		if name == "rsync" {
+			return execx.Result{
+				Stdout: "Number of regular files transferred: 3\nTotal transferred file size: 9 bytes\n",
+				Stderr: "some files vanished before they could be transferred",
+				Code:   24,
+			}, errors.New("exit status 24")
+		}
+		if name == "cp" {
+			_ = os.MkdirAll(args[2], 0o755)
+			return execx.Result{}, nil
+		}
+		return execx.Result{}, nil
+	}}
+	d := config.Defaults{Retention: config.Retention{Recent: 5}}
+	deps := Deps{Runner: fr, FSType: ext4FS, Log: &captureLog{},
+		Now: func() time.Time { return time.Date(2026, 6, 24, 3, 0, 0, 0, time.UTC) }}
+	res := SyncOne(context.Background(), s, d, deps, false)
+	if !res.OK || res.Err != nil {
+		t.Fatalf("exit 24 should be non-fatal, res = %+v", res)
+	}
+	if res.Files != 3 {
+		t.Fatalf("stats not parsed on warning path: %+v", res)
+	}
+	if _, err := os.Stat(filepath.Join(s.LocalPath, "snapshots", "2026-06-24_030000")); err != nil {
+		t.Fatalf("snapshot not created on warning path: %v", err)
+	}
+}
+
+// When another run already holds the per-root lock, SyncOne skips (does no
+// work, reports Skipped) instead of running rsync --delete concurrently.
+func TestSyncOneSkipsWhenLocked(t *testing.T) {
+	s := okEntry(t)
+	held, ok, err := acquireLock(s.LocalPath)
+	if err != nil || !ok {
+		t.Fatalf("could not take lock in test: ok=%v err=%v", ok, err)
+	}
+	defer held.release()
+
+	fr := &execx.FakeRunner{Handler: func(name string, args []string) (execx.Result, error) {
+		return execx.Result{}, nil
+	}}
+	deps := Deps{Runner: fr, FSType: ext4FS, Log: &captureLog{}, Now: time.Now}
+	res := SyncOne(context.Background(), s, config.Defaults{}, deps, false)
+	if !res.Skipped || res.OK {
+		t.Fatalf("expected Skipped and not OK, got %+v", res)
+	}
+	for _, c := range fr.Calls {
+		t.Fatalf("no command should run while locked, got %+v", c)
+	}
+}
+
+// A cancelled context stops SyncMany from launching further entries rather than
+// reporting them as spurious failures.
+func TestSyncManyStopsOnCancelledContext(t *testing.T) {
+	fr := &execx.FakeRunner{Handler: func(name string, args []string) (execx.Result, error) {
+		return execx.Result{}, nil
+	}}
+	deps := Deps{Runner: fr, FSType: ext4FS, Log: &captureLog{}, Now: time.Now}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already cancelled before any entry runs
+	results := SyncMany(ctx, []config.Sync{okEntry(t), okEntry(t)}, config.Defaults{}, deps, false)
+	if len(results) != 0 {
+		t.Fatalf("expected no entries processed after cancel, got %d results", len(results))
+	}
+	for _, c := range fr.Calls {
+		if c.Name == "rsync" || c.Name == "ssh" {
+			t.Fatalf("no command should run after cancel, got %+v", c)
+		}
+	}
+}
+
 // rsync missing locally -> fail, no snapshot.
 func TestSyncOneLocalRsyncMissing(t *testing.T) {
 	s := okEntry(t)
