@@ -30,6 +30,70 @@ func okEntry(t *testing.T) config.Sync {
 	}
 }
 
+// streamFake implements both execx.Runner and execx.StreamRunner so the rsync
+// transfer takes the streaming path while preflight uses Run.
+type streamFake struct {
+	progress []string
+	handler  func(name string, args []string) (execx.Result, error)
+}
+
+func (f *streamFake) Run(_ context.Context, name string, args ...string) (execx.Result, error) {
+	return f.handler(name, args)
+}
+
+func (f *streamFake) RunStream(_ context.Context, onLine func(string), name string, args ...string) (execx.Result, error) {
+	for _, l := range f.progress {
+		if onLine != nil {
+			onLine(l)
+		}
+	}
+	return f.handler(name, args)
+}
+
+// When the runner is a StreamRunner, rsync progress lines are forwarded to the
+// log (throttled), and the full captured stdout still feeds parseStats.
+func TestSyncOneStreamsProgress(t *testing.T) {
+	s := okEntry(t)
+	h := func(name string, args []string) (execx.Result, error) {
+		switch {
+		case name == "rsync" && len(args) == 1 && args[0] == "--version":
+			return execx.Result{Stdout: "rsync version 3"}, nil
+		case name == "ssh":
+			return execx.Result{Stdout: "/usr/bin/rsync"}, nil
+		case name == "rsync":
+			return execx.Result{Stdout: "Number of regular files transferred: 5\nTotal transferred file size: 42 bytes\n"}, nil
+		case name == "cp":
+			_ = os.MkdirAll(args[2], 0o755)
+			return execx.Result{}, nil
+		}
+		return execx.Result{}, nil
+	}
+	fr := &streamFake{progress: []string{"10% 1MB/s", "50% 1MB/s", "99% 1MB/s"}, handler: h}
+	log := &captureLog{}
+	// A constant clock means only the first progress line survives throttling.
+	deps := Deps{Runner: fr, FSType: ext4FS, Log: log,
+		Now: func() time.Time { return time.Date(2026, 6, 24, 3, 0, 0, 0, time.UTC) }}
+	res := SyncOne(context.Background(), s, config.Defaults{Retention: config.Retention{Recent: 5}}, deps, false)
+	if !res.OK || res.Err != nil {
+		t.Fatalf("res = %+v", res)
+	}
+	if res.Files != 5 || res.Bytes != 42 {
+		t.Fatalf("stats not parsed from streamed stdout: %+v", res)
+	}
+	n := 0
+	for _, l := range log.lines {
+		if strings.Contains(l, "1MB/s") {
+			n++
+			if !strings.Contains(l, "[web]") {
+				t.Fatalf("progress line missing entry prefix: %q", l)
+			}
+		}
+	}
+	if n != 1 {
+		t.Fatalf("forwarded %d progress lines, want 1 (throttled)", n)
+	}
+}
+
 // happy path: rsync ok, hardlink snapshot created, prune keeps the only one.
 func TestSyncOneHappyPath(t *testing.T) {
 	s := okEntry(t)
