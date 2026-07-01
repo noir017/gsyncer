@@ -132,6 +132,41 @@ func TestSummarize(t *testing.T) {
 	}
 }
 
+func TestRunTickReArmsWhileRunningStopsWhenDone(t *testing.T) {
+	m := newTestRun()
+	m.running = true
+	// while running, a tick advances the spinner and re-arms itself
+	before := m.spinner
+	m, cmd := m.Update(tickMsg{})
+	if cmd == nil {
+		t.Fatal("tick must re-arm while running")
+	}
+	if m.spinner != before+1 {
+		t.Fatalf("spinner = %d, want %d", m.spinner, before+1)
+	}
+	// once not running, a stray tick is a no-op and does NOT re-arm
+	m.running = false
+	m, cmd = m.Update(tickMsg{})
+	if cmd != nil {
+		t.Fatal("tick must not re-arm after run finished")
+	}
+}
+
+func TestFmtElapsed(t *testing.T) {
+	cases := map[time.Duration]string{
+		0:                          "00:00",
+		5 * time.Second:            "00:05",
+		75 * time.Second:           "01:15",
+		(2*60 + 3) * time.Second:   "02:03",
+		(100*60 + 9) * time.Second: "100:09",
+	}
+	for d, want := range cases {
+		if got := fmtElapsed(d); got != want {
+			t.Fatalf("fmtElapsed(%v) = %q, want %q", d, got, want)
+		}
+	}
+}
+
 func TestRunDoneSummaryUsesDuration(t *testing.T) {
 	m := newTestRun()
 	m.running = true
