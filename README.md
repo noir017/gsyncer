@@ -285,9 +285,42 @@ GOARCH=arm64 ./build.sh           # 交叉编译 arm64
 
 脚本用 `CGO_ENABLED=0` + `-ldflags "-s -w" -trimpath` 产出静态、精简、可复现的二进制，并自动校验 `ldd` 为 `not a dynamic executable`。也可直接 `CGO_ENABLED=0 go build -o gsync .`。
 
+### 运行测试
+
+日常测试不依赖任何服务器，在项目根目录一条命令即可，每行前显示 `ok` 即全部通过：
+
 ```bash
-go test ./...      # 运行全部单元测试
-go vet ./...
+go test ./...              # 运行全部单元测试
+go test -cover ./...       # 顺便看每个包的覆盖率
+go test -v ./...           # 显示每个用例的名字与结果
+go test ./internal/syncer  # 只跑某一个包
 ```
+
+想和 CI 完全一致（额外开启数据竞争检测）：
+
+```bash
+go test -race -count=1 ./...
+```
+
+> `go test` 会缓存结果，未改动的包显示 `(cached)` 直接跳过；加 `-count=1` 可强制重跑。
+> 提交前也可跑一遍 `go vet ./...` 做静态检查（CI 里同样会跑）。
+
+### 端到端（e2e）测试
+
+端到端测试放在 **`e2e/` 子目录**（独立的 `e2e` 包），用 `e2e` 构建标签隔离，默认的 `go test ./...` **不会**跑它——它需要真实的 `ssh`/`rsync` 与可登录的服务器，跑完整的「拉取 → 快照 → 恢复 → 清理」流水线并断言磁盘结果。这些用例是黑盒的：从模块根目录编译出二进制再执行，不依赖任何内部包。
+
+服务器通过**本地配置文件**提供，仓库里不含任何主机名或凭据。把示例复制一份填上自己的服务器即可：
+
+```bash
+cp e2e/e2e.config.example.toml e2e/e2e.config.toml   # 编辑填入你的服务器
+go test -tags e2e ./e2e -v
+```
+
+`e2e/e2e.config.toml` 已在 `.gitignore` 中（不会提交）；也可用 `GSYNC_E2E_CONFIG` 指向别处的配置。配置全部可选：
+
+- `[[server]]`：装有 rsync 的主机，可写**零个或多个**，流水线对每台各跑一遍；一个都没有则 `TestE2E` 跳过。
+- `[[no_rsync_server]]`：**未装** rsync 的主机，可写零个或多个，用于验证失败路径退出非 0；没有则该测试跳过。
+
+字段：`host`（必填）、`user`（必填）、`port`（默认 22）、`identity`（可选，留空则用 ssh 自身的 `~/.ssh/config`）、`remote_base`（可选，测试临时目录的父路径，默认 `/tmp`）。每个用例在远端建独立的临时目录、结束时自动删除；不可达的主机会被单独跳过，所以部分配置也能跑。
 
 代码结构：`internal/config`（配置）、`internal/syncer`（同步流水线）、`internal/snapshot`（硬链接 / btrfs 后端）、`internal/retention`（GFS 策略）、`internal/tui`（界面）、`internal/logx`、`internal/ignore`、`internal/execx`。

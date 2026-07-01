@@ -1,5 +1,6 @@
 /gsync
 /logs/
 /config.toml
+/e2e/e2e.config.toml
 *.test
 /.superpowers/
