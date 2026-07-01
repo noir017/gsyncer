@@ -3,8 +3,16 @@ package snapshot
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
+
+// resetBtrfsCache clears the memoized `btrfs --version` probe so a test can
+// exercise a fresh detection outcome regardless of what ran before it.
+func resetBtrfsCache() {
+	btrfsOnce = sync.Once{}
+	btrfsOK = false
+}
 
 func TestListParsesSnapshotDirs(t *testing.T) {
 	root := t.TempDir()

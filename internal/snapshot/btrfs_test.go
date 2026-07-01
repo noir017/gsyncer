@@ -104,6 +104,7 @@ func TestDetectChoosesBackend(t *testing.T) {
 		return execx.Result{}, nil // `btrfs --version` succeeds
 	}}
 	btrfsFS := func(string) (int64, error) { return BtrfsMagic, nil }
+	resetBtrfsCache()
 	if be := Detect(ctx, "/x", okBtrfs, btrfsFS); be.Name() != "btrfs" {
 		t.Fatalf("want btrfs, got %s", be.Name())
 	}
@@ -111,11 +112,40 @@ func TestDetectChoosesBackend(t *testing.T) {
 	if be := Detect(ctx, "/x", okBtrfs, ext4FS); be.Name() != "hardlink" {
 		t.Fatalf("want hardlink on ext4, got %s", be.Name())
 	}
-	// btrfs FS but no btrfs binary -> hardlink
+	// btrfs FS but no btrfs binary -> hardlink. Reset the memoized probe so this
+	// scenario isn't masked by the earlier successful probe.
+	resetBtrfsCache()
 	noBin := &execx.FakeRunner{Handler: func(name string, args []string) (execx.Result, error) {
 		return execx.Result{Code: 127}, errors.New("not found")
 	}}
 	if be := Detect(ctx, "/x", noBin, btrfsFS); be.Name() != "hardlink" {
 		t.Fatalf("want hardlink when btrfs missing, got %s", be.Name())
+	}
+}
+
+// The `btrfs --version` probe must run at most once per process even across many
+// Detect calls (Detect fires per entry, and SyncMany may run entries in
+// parallel). The per-path statfs check still runs every call.
+func TestDetectBtrfsProbedOnce(t *testing.T) {
+	ctx := context.Background()
+	resetBtrfsCache()
+	var probes, statfs int
+	r := &execx.FakeRunner{Handler: func(name string, args []string) (execx.Result, error) {
+		if name == "btrfs" && len(args) > 0 && args[0] == "--version" {
+			probes++
+		}
+		return execx.Result{}, nil
+	}}
+	btrfsFS := func(string) (int64, error) { statfs++; return BtrfsMagic, nil }
+	for i := 0; i < 3; i++ {
+		if be := Detect(ctx, "/x", r, btrfsFS); be.Name() != "btrfs" {
+			t.Fatalf("call %d: want btrfs, got %s", i, be.Name())
+		}
+	}
+	if probes != 1 {
+		t.Fatalf("btrfs --version probed %d times, want 1", probes)
+	}
+	if statfs != 3 {
+		t.Fatalf("statfs called %d times, want 3 (per-path check must still run)", statfs)
 	}
 }
