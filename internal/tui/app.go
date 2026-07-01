@@ -50,6 +50,12 @@ func (a *App) Init() tea.Cmd { return nil }
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		// Store the latest size (used to seed run/snaps/form at creation) and
+		// fall through to the screen router so the ACTIVE model resizes live.
+		// The list is the initial screen, so it receives the startup size that
+		// way; run/snaps/form are additionally seeded on creation below. We do
+		// not forward to inactive sub-models here because a zero-value form's
+		// textarea panics on SetWidth before it is constructed.
 		a.width, a.height = msg.Width, msg.Height
 
 	case statusMsg:
@@ -62,11 +68,17 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case editEntryMsg:
 		a.form = newForm(a.cfg, a.cfgPath, msg.idx)
+		if a.width > 0 {
+			a.form, _ = a.form.Update(tea.WindowSizeMsg{Width: a.width, Height: a.height})
+		}
 		a.screen = screenForm
 		return a, a.form.Init()
 
 	case copyEntryMsg:
 		a.form = newFormCopy(a.cfg, a.cfgPath, msg.idx)
+		if a.width > 0 {
+			a.form, _ = a.form.Update(tea.WindowSizeMsg{Width: a.width, Height: a.height})
+		}
 		a.screen = screenForm
 		return a, a.form.Init()
 
