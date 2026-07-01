@@ -97,6 +97,54 @@ func TestValidateRejectsNegativeEntryRetention(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsRelativeLocalPath(t *testing.T) {
+	c := &Config{Sync: []Sync{
+		{Name: "a", Host: "h", User: "u", RemotePath: "/r", LocalPath: "data/web"},
+	}}
+	if err := c.Validate(); err == nil {
+		t.Fatal("expected error for relative local_path")
+	}
+}
+
+func TestValidateRejectsRootLocalPath(t *testing.T) {
+	c := &Config{Sync: []Sync{
+		{Name: "a", Host: "h", User: "u", RemotePath: "/r", LocalPath: "/"},
+	}}
+	if err := c.Validate(); err == nil {
+		t.Fatal("expected error for filesystem-root local_path")
+	}
+}
+
+func TestLoadExpandsTildeLocalPath(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home dir")
+	}
+	key := writeKey(t)
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.toml")
+	content := `
+[[sync]]
+name = "web"
+host = "h"
+user = "u"
+identity = "` + key + `"
+remote_path = "/r"
+local_path = "~/backups/web"
+`
+	if err := os.WriteFile(cfg, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(cfg)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	want := filepath.Join(home, "backups", "web")
+	if c.Sync[0].LocalPath != want {
+		t.Fatalf("local_path = %q, want %q", c.Sync[0].LocalPath, want)
+	}
+}
+
 func TestSaveRoundTrip(t *testing.T) {
 	key := writeKey(t)
 	dir := t.TempDir()

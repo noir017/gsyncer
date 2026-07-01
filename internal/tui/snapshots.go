@@ -117,7 +117,13 @@ func (m snapsModel) Update(msg tea.Msg) (snapsModel, tea.Cmd) {
 
 	if m.confirmOverwrite {
 		if key.String() == "y" || key.String() == "Y" {
-			if _, err := m.runner.Run(context.Background(), "cp", "-a", m.pendingSrc, m.pendingDst); err != nil {
+			// Remove the existing destination first so the restore replaces it
+			// cleanly. A bare `cp -a src dst` into an existing directory nests
+			// the copy as dst/<name>/… and leaves stale files behind — the
+			// opposite of the "overwrite" the user just confirmed.
+			if err := os.RemoveAll(m.pendingDst); err != nil {
+				m.status = "恢复失败: " + err.Error()
+			} else if _, err := m.runner.Run(context.Background(), "cp", "-a", m.pendingSrc, m.pendingDst); err != nil {
 				m.status = "恢复失败: " + err.Error()
 			} else {
 				m.status = "已恢复到 " + m.pendingDst
