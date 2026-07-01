@@ -1,0 +1,172 @@
+package logx
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+func ts(s string) time.Time {
+	t, _ := time.Parse("2006-01-02_150405", s)
+	return t
+}
+
+func TestRunLoggerWritesFile(t *testing.T) {
+	dir := t.TempDir()
+	l, err := NewRunLogger(dir, ts("2026-06-24_030000"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Infof("hello %s", "world")
+	l.Errorf("boom %d", 7)
+	l.Close()
+	data, err := os.ReadFile(filepath.Join(dir, "2026-06-24_030000.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(data)
+	if !strings.Contains(s, "hello world") || !strings.Contains(s, "boom 7") {
+		t.Fatalf("log content = %q", s)
+	}
+	if !strings.Contains(s, "INFO") || !strings.Contains(s, "ERROR") {
+		t.Fatalf("missing levels: %q", s)
+	}
+}
+
+func TestAppendSummary(t *testing.T) {
+	dir := t.TempDir()
+	if err := AppendSummary(dir, "run A ok"); err != nil {
+		t.Fatal(err)
+	}
+	if err := AppendSummary(dir, "run B ok"); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, "summary.log"))
+	if c := strings.Count(string(data), "\n"); c != 2 {
+		t.Fatalf("want 2 lines, content=%q", data)
+	}
+}
+
+func TestRunLoggerPrivatePerms(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "logs")
+	l, err := NewRunLogger(dir, ts("2026-06-24_030000"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	di, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if di.Mode().Perm() != 0o700 {
+		t.Fatalf("log dir perm = %#o, want 0700", di.Mode().Perm())
+	}
+	fi, err := os.Stat(filepath.Join(dir, "2026-06-24_030000.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Fatalf("log file perm = %#o, want 0600", fi.Mode().Perm())
+	}
+}
+
+func TestAppendSummaryTightensPreexisting(t *testing.T) {
+	dir := t.TempDir()
+	// Simulate a summary.log left behind with loose perms by an older version.
+	if err := os.WriteFile(filepath.Join(dir, "summary.log"), []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := AppendSummary(dir, "run ok"); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(filepath.Join(dir, "summary.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Fatalf("summary.log perm = %#o, want 0600", fi.Mode().Perm())
+	}
+}
+
+func TestCleanupByCountAndDays(t *testing.T) {
+	dir := t.TempDir()
+	names := []string{
+		"2026-06-24_030000.log",
+		"2026-06-23_030000.log",
+		"2026-01-01_030000.log", // old
+		"summary.log",           // must survive
+	}
+	for _, n := range names {
+		if err := os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := ts("2026-06-24_040000")
+	// keepDays=30 removes the Jan file; keepCount=10 keeps the rest.
+	if err := Cleanup(dir, 30, 10, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "2026-01-01_030000.log")); err == nil {
+		t.Fatal("old log should be deleted")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "summary.log")); err != nil {
+		t.Fatal("summary.log must survive")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "2026-06-24_030000.log")); err != nil {
+		t.Fatal("recent log must survive")
+	}
+}
+
+func TestCleanupByCountOnly(t *testing.T) {
+	dir := t.TempDir()
+	names := []string{
+		"2026-06-24_030000.log", // newest
+		"2026-06-23_030000.log",
+		"2026-06-22_030000.log", // oldest -> should be pruned
+	}
+	for _, n := range names {
+		if err := os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// keepDays=0 disables the age rule; keepCount=2 keeps the 2 newest.
+	if err := Cleanup(dir, 0, 2, ts("2026-06-24_040000")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "2026-06-22_030000.log")); err == nil {
+		t.Fatal("oldest log should be pruned by count")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "2026-06-24_030000.log")); err != nil {
+		t.Fatal("newest log must survive")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "2026-06-23_030000.log")); err != nil {
+		t.Fatal("second-newest log must survive")
+	}
+}
+
+func TestRunLoggerSameSecondAppends(t *testing.T) {
+	dir := t.TempDir()
+	when := ts("2026-06-24_030000")
+	l1, err := NewRunLogger(dir, when)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l1.Infof("first run")
+	l1.Close()
+	l2, err := NewRunLogger(dir, when) // same second -> same filename
+	if err != nil {
+		t.Fatal(err)
+	}
+	l2.Infof("second run")
+	l2.Close()
+	data, err := os.ReadFile(filepath.Join(dir, "2026-06-24_030000.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(data)
+	if !strings.Contains(s, "first run") || !strings.Contains(s, "second run") {
+		t.Fatalf("same-second run lost a log line: %q", s)
+	}
+}
