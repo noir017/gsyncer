@@ -45,9 +45,7 @@ func TestSyncOneHappyPath(t *testing.T) {
 			return execx.Result{Stdout: "Number of regular files transferred: 5\nTotal transferred file size: 42 bytes\n"}, nil
 		}
 		if name == "cp" {
-			// emulate cp -al by creating the dir so List() sees it
-			_ = os.MkdirAll(args[2], 0o755)
-			return execx.Result{}, nil
+			return cpHardlinkFake(args)
 		}
 		return execx.Result{}, nil
 	}}
@@ -88,8 +86,7 @@ func TestSyncOneRsyncExit24Continues(t *testing.T) {
 			}, errors.New("exit status 24")
 		}
 		if name == "cp" {
-			_ = os.MkdirAll(args[2], 0o755)
-			return execx.Result{}, nil
+			return cpHardlinkFake(args)
 		}
 		return execx.Result{}, nil
 	}}
@@ -173,7 +170,7 @@ func TestSyncManyParallelStableOrder(t *testing.T) {
 			return execx.Result{Stdout: "Number of regular files transferred: 1\n"}, nil
 		}
 		if name == "cp" {
-			_ = os.MkdirAll(args[2], 0o755)
+			return cpHardlinkFake(args)
 		}
 		return execx.Result{}, nil
 	}}
@@ -215,7 +212,7 @@ func TestSyncManyRespectsJobsLimit(t *testing.T) {
 			return execx.Result{Stdout: "Number of regular files transferred: 1\n"}, nil
 		}
 		if name == "cp" {
-			_ = os.MkdirAll(args[2], 0o755)
+			return cpHardlinkFake(args)
 		}
 		return execx.Result{}, nil
 	}}
@@ -249,7 +246,7 @@ func TestSyncOneNoRemotePreflight(t *testing.T) {
 			return execx.Result{Stdout: "Number of regular files transferred: 1\n"}, nil
 		}
 		if name == "cp" {
-			_ = os.MkdirAll(args[2], 0o755)
+			return cpHardlinkFake(args)
 		}
 		return execx.Result{}, nil
 	}}
@@ -359,7 +356,7 @@ func TestSyncManyIsolatesFailures(t *testing.T) {
 			return execx.Result{Stdout: "Number of regular files transferred: 1\n"}, nil
 		}
 		if name == "cp" {
-			_ = os.MkdirAll(args[2], 0o755)
+			return cpHardlinkFake(args)
 		}
 		return execx.Result{}, nil
 	}}
@@ -414,8 +411,7 @@ func TestSyncOneFallsBackWhenCurrentNotSubvolume(t *testing.T) {
 			return execx.Result{Stdout: "Number of regular files transferred: 2\n"}, nil
 		}
 		if name == "cp" {
-			_ = os.MkdirAll(args[2], 0o755)
-			return execx.Result{}, nil
+			return cpHardlinkFake(args)
 		}
 		return execx.Result{}, nil
 	}}
@@ -461,8 +457,7 @@ func TestSyncOneBtrfsCreateFallsBackToHardlink(t *testing.T) {
 			return execx.Result{Stdout: "Number of regular files transferred: 2\n"}, nil
 		}
 		if name == "cp" {
-			_ = os.MkdirAll(args[2], 0o755) // emulate hardlink fallback copy
-			return execx.Result{}, nil
+			return cpHardlinkFake(args)
 		}
 		return execx.Result{}, nil
 	}}
