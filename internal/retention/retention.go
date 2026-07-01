@@ -58,6 +58,14 @@ func Select(times []time.Time, p Policy) []time.Time {
 	}, p.Semiannual)
 	pickBuckets(func(t time.Time) int { return t.Year() }, p.Yearly)
 
+	// Safety floor: always keep the most recent snapshot, regardless of policy.
+	// This guarantees a sync never prunes the snapshot it just created — most
+	// importantly under an all-zero policy, which would otherwise delete every
+	// snapshot including the fresh one and wipe all history.
+	if len(sorted) > 0 {
+		add(sorted[0])
+	}
+
 	var out []time.Time
 	for _, t := range sorted {
 		if keep[t.UnixNano()] {
