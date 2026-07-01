@@ -131,6 +131,17 @@ func SyncOne(ctx context.Context, s config.Sync, d config.Defaults, deps Deps, d
 
 	ts := deps.Now()
 	snap, err := be.Create(ctx, s.LocalPath, ts)
+	if err != nil && be.Name() == "btrfs" {
+		// btrfs snapshot can fail after EnsureCurrent passed (quota exhausted,
+		// current swapped to a plain dir, etc.). Rather than abort with no
+		// snapshot at all, fall back to a hardlink copy of current — it works on
+		// any filesystem and preserves this run's backup.
+		deps.Log.Errorf("[%s] btrfs snapshot failed (%v); retrying with hardlink", s.Name, err)
+		be = snapshot.NewHardlink(deps.Runner)
+		res.Mode = be.Name()
+		deps.Log.Infof("[%s] snapshot mode: %s", s.Name, be.Name())
+		snap, err = be.Create(ctx, s.LocalPath, ts)
+	}
 	if err != nil {
 		deps.Log.Errorf("[%s] snapshot failed: %v", s.Name, err)
 		res.Err = err
