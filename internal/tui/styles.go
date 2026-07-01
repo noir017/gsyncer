@@ -6,6 +6,7 @@ var (
 	styleTitle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
 	styleStatus   = lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
 	styleErr      = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	styleWarn     = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
 	styleBox      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
 	styleHelp     = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	styleDotOK    = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).SetString("●")

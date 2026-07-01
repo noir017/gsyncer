@@ -30,6 +30,7 @@ type listModel struct {
 	backends map[string]string    // localPath -> backend name
 	counts   map[string]int       // localPath -> snapshot count
 	lastRun  map[string]runStatus // entry name -> status (this session only)
+	warn     map[string]string    // entry name -> non-fatal issue (e.g. bad identity)
 }
 
 func newList(cfg *config.Config, runner execx.Runner, fsType snapshot.FSTypeFunc) listModel {
@@ -38,6 +39,7 @@ func newList(cfg *config.Config, runner execx.Runner, fsType snapshot.FSTypeFunc
 		backends: map[string]string{},
 		counts:   map[string]int{},
 		lastRun:  map[string]runStatus{},
+		warn:     map[string]string{},
 	}
 	m.refresh()
 	return m
@@ -47,12 +49,16 @@ func newList(cfg *config.Config, runner execx.Runner, fsType snapshot.FSTypeFunc
 func (m *listModel) refresh() {
 	m.backends = map[string]string{}
 	m.counts = map[string]int{}
+	m.warn = map[string]string{}
 	ctx := context.Background()
 	for _, s := range m.cfg.Sync {
 		be := snapshot.Detect(ctx, s.LocalPath, m.runner, m.fsType)
 		m.backends[s.LocalPath] = be.Name()
 		if times, err := snapshot.List(s.LocalPath); err == nil {
 			m.counts[s.LocalPath] = len(times)
+		}
+		if msg := s.IdentityIssue(); msg != "" {
+			m.warn[s.Name] = msg
 		}
 	}
 	if m.cursor >= len(m.cfg.Sync) {
@@ -154,9 +160,26 @@ func (m listModel) View() string {
 		if i == m.cursor {
 			cursor = "▶ "
 		}
-		b.WriteString(fmt.Sprintf("%s%s %-12s %s@%s:%s → %s  %d snaps  %s\n",
-			cursor, dot, s.Name, s.User, s.Host, s.RemotePath, s.LocalPath,
+		// Flag entries with a non-fatal issue (e.g. an inaccessible identity) so
+		// they stand out instead of silently blocking a run later.
+		mark := " "
+		name := fmt.Sprintf("%-12s", s.Name)
+		if _, bad := m.warn[s.Name]; bad {
+			mark = styleWarn.Render("⚠")
+			name = styleWarn.Render(name)
+		}
+		b.WriteString(fmt.Sprintf("%s%s%s %s %s@%s:%s → %s  %d snaps  %s\n",
+			cursor, dot, mark, name, s.User, s.Host, s.RemotePath, s.LocalPath,
 			m.counts[s.LocalPath], m.backends[s.LocalPath]))
+	}
+	if len(m.warn) > 0 {
+		b.WriteString("\n")
+		// Iterate cfg.Sync (not the map) for stable, config order.
+		for _, s := range m.cfg.Sync {
+			if msg, bad := m.warn[s.Name]; bad {
+				b.WriteString(styleWarn.Render(fmt.Sprintf("⚠ %s: %s", s.Name, msg)) + "\n")
+			}
+		}
 	}
 	return b.String()
 }
