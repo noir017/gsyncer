@@ -9,6 +9,15 @@ import (
 	"gsync/internal/ignore"
 )
 
+const (
+	// sshConnectTimeout bounds the TCP/handshake phase so an unreachable host
+	// fails fast instead of hanging a cron run forever.
+	sshConnectTimeout = 10
+	// rsyncIOTimeout aborts a transfer that stalls (no I/O) for this many
+	// seconds, guarding against half-open connections.
+	rsyncIOTimeout = 300
+)
+
 // parseStats extracts the transferred file count and byte count from rsync's
 // --info=stats2 / --stats output.
 func parseStats(out string) (files, bytes int64) {
@@ -55,7 +64,8 @@ func strictOpt(strict bool) string {
 
 // sshOptArg builds the single string passed to rsync's -e option.
 func sshOptArg(identity string, port int, strict bool) string {
-	parts := []string{"ssh", "-p", strconv.Itoa(port), "-o", "BatchMode=yes", "-o", strictOpt(strict)}
+	parts := []string{"ssh", "-p", strconv.Itoa(port), "-o", "BatchMode=yes",
+		"-o", "ConnectTimeout=" + strconv.Itoa(sshConnectTimeout), "-o", strictOpt(strict)}
 	if identity != "" {
 		parts = append(parts, "-i", config.ExpandHome(identity))
 	}
@@ -64,7 +74,8 @@ func sshOptArg(identity string, port int, strict bool) string {
 
 // sshCmdArgs builds args for invoking ssh directly (used by preflight).
 func sshCmdArgs(identity string, port int, strict bool, user, host, remoteCmd string) []string {
-	args := []string{"-p", strconv.Itoa(port), "-o", "BatchMode=yes", "-o", strictOpt(strict)}
+	args := []string{"-p", strconv.Itoa(port), "-o", "BatchMode=yes",
+		"-o", "ConnectTimeout=" + strconv.Itoa(sshConnectTimeout), "-o", strictOpt(strict)}
 	if identity != "" {
 		args = append(args, "-i", config.ExpandHome(identity))
 	}
@@ -82,7 +93,7 @@ func ensureTrailingSlash(p string) string {
 
 // buildRsyncArgs assembles the full rsync argument list for one entry.
 func buildRsyncArgs(s config.Sync, port int, currentPath string, dryRun bool) []string {
-	args := []string{"-a", "--delete", "--info=stats2"}
+	args := []string{"-a", "--delete", "--info=stats2", "--timeout", strconv.Itoa(rsyncIOTimeout)}
 	if dryRun {
 		args = append(args, "-n")
 	}

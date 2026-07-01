@@ -25,6 +25,7 @@ func TestSSHOptArg(t *testing.T) {
 	if !strings.Contains(got, "ssh -p 2222") ||
 		!strings.Contains(got, "-i /k") ||
 		!strings.Contains(got, "BatchMode=yes") ||
+		!strings.Contains(got, "ConnectTimeout=10") ||
 		!strings.Contains(got, "StrictHostKeyChecking=accept-new") {
 		t.Fatalf("opt arg = %q", got)
 	}
@@ -38,6 +39,7 @@ func TestSSHCmdArgs(t *testing.T) {
 	args := sshCmdArgs("/k", 22, false, "u", "h", "command -v rsync")
 	j := strings.Join(args, " ")
 	if !strings.Contains(j, "-p 22") || !strings.Contains(j, "-i /k") ||
+		!strings.Contains(j, "ConnectTimeout=10") ||
 		!strings.HasSuffix(j, "u@h command -v rsync") {
 		t.Fatalf("cmd args = %v", args)
 	}
@@ -50,7 +52,7 @@ func TestBuildRsyncArgs(t *testing.T) {
 	args := buildRsyncArgs(s, 22, "/local/current", false)
 	j := strings.Join(args, " ")
 	if !strings.Contains(j, "-a") || !strings.Contains(j, "--delete") ||
-		!strings.Contains(j, "--info=stats2") {
+		!strings.Contains(j, "--info=stats2") || !strings.Contains(j, "--timeout 300") {
 		t.Fatalf("missing base flags: %v", args)
 	}
 	if !strings.Contains(j, "--filter - *.log") {
