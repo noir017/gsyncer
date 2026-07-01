@@ -3,8 +3,34 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestLoadMissingFileFriendlyError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nope.toml")
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected an error for a missing config file")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "not found") || !strings.Contains(msg, path) {
+		t.Fatalf("error should name the path and be friendly, got %q", msg)
+	}
+	if !strings.Contains(msg, "gsync init") {
+		t.Fatalf("error should suggest the remedy, got %q", msg)
+	}
+}
+
+func TestStarterTemplateLoadsAndValidates(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte(StarterTemplate), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err != nil {
+		t.Fatalf("starter template must load+validate: %v", err)
+	}
+}
 
 func writeKey(t *testing.T) string {
 	t.Helper()

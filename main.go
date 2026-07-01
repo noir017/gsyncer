@@ -5,6 +5,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -36,6 +37,24 @@ func exeDir() string {
 	return filepath.Dir(p)
 }
 
+// usage prints the top-level command reference to w.
+func usage(w io.Writer) {
+	fmt.Fprintf(w, `gsync %s — 通过 ssh+rsync 备份远程文件夹，并保留 GFS 快照
+
+用法:
+  gsync                       启动交互式 TUI
+  gsync sync [flags]          同步条目 (-name -server -dry-run -config)
+  gsync list [-config path]   列出已配置的条目
+  gsync snapshots -name N     列出某条目的快照 (-config)
+  gsync prune [flags]         按保留策略清理快照 (-name -config)
+  gsync init [-config -force] 在默认位置写入一份带注释的示例配置
+  gsync version               打印版本
+  gsync help                  显示本帮助
+
+默认配置路径: %s
+`, version, resolveConfigPath("", exeDir()))
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		logDir := filepath.Join(exeDir(), "logs")
@@ -49,6 +68,8 @@ func main() {
 	switch os.Args[1] {
 	case "version":
 		fmt.Println("gsync", version)
+	case "help", "-h", "--help":
+		usage(os.Stdout)
 	case "sync":
 		os.Exit(cmdSync(os.Args[2:]))
 	case "list":
@@ -57,10 +78,36 @@ func main() {
 		os.Exit(cmdSnapshots(os.Args[2:]))
 	case "prune":
 		os.Exit(cmdPrune(os.Args[2:]))
+	case "init":
+		os.Exit(cmdInit(os.Args[2:]))
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command %q\n", os.Args[1])
+		fmt.Fprintf(os.Stderr, "unknown command %q\n\n", os.Args[1])
+		usage(os.Stderr)
 		os.Exit(2)
 	}
+}
+
+// cmdInit writes a commented starter config to the resolved path, refusing to
+// clobber an existing file unless -force is given.
+func cmdInit(argv []string) int {
+	fs := flag.NewFlagSet("init", flag.ExitOnError)
+	cfgFlag := fs.String("config", "", "config file path to create")
+	force := fs.Bool("force", false, "overwrite an existing config file")
+	_ = fs.Parse(argv)
+
+	path := resolveConfigPath(*cfgFlag, exeDir())
+	if _, err := os.Stat(path); err == nil && !*force {
+		fmt.Fprintf(os.Stderr, "config already exists at %s (use -force to overwrite)\n", path)
+		return 1
+	}
+	// 0600: the config may reference identity key paths; keep it owner-only,
+	// consistent with the tightened perms elsewhere in gsync.
+	if err := os.WriteFile(path, []byte(config.StarterTemplate), 0o600); err != nil {
+		fmt.Fprintln(os.Stderr, "init:", err)
+		return 1
+	}
+	fmt.Printf("wrote starter config to %s\n", path)
+	return 0
 }
 
 func loadConfig(cfgFlag string) (*config.Config, error) {

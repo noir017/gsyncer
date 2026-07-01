@@ -2,13 +2,51 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/BurntSushi/toml"
 )
+
+// StarterTemplate is a commented example config written by `gsync init`. It
+// decodes to a valid, empty-of-entries config (so `gsync list` works right
+// after init); users uncomment the [[sync]] block to add their first entry.
+const StarterTemplate = `# gsync 配置文件
+# 每个 [[sync]] 块描述一个「远程目录 -> 本地目录」的备份任务。
+# 去掉下面示例块的注释并按需修改即可。
+
+[defaults]
+  ssh_port = 22                    # 未在条目中指定时使用的默认 SSH 端口
+
+  [defaults.retention]             # 默认 GFS 保留策略（条目可覆盖）
+    recent     = 7                 # 保留最近的 7 份快照
+    monthly    = 6                 # 含快照的最近 6 个月各留最新一份
+    semiannual = 2
+    yearly     = 2
+
+[log]
+  keep_days  = 30                  # 运行日志保留天数（0 = 不按天清理）
+  keep_count = 100                 # 运行日志保留份数（0 = 不按份数清理）
+
+# --- 示例条目（去掉注释后启用）---
+# [[sync]]
+#   name        = "web"
+#   host        = "1.2.3.4"
+#   port        = 22
+#   user        = "deploy"
+#   identity    = "~/.ssh/id_ed25519"
+#   remote_path = "/srv/www"
+#   local_path  = "/data/backups/web"   # 必须是绝对路径
+#   strict_host_key = false
+#   ignore      = ["node_modules/", "__pycache__/", "*.log"]
+#
+#   [sync.retention]                    # 可选：覆盖默认保留策略，未填字段回退到 defaults
+#     recent = 14
+`
 
 // Retention is the resolved keep-count for each layer.
 type Retention struct {
@@ -67,6 +105,9 @@ type Config struct {
 func Load(path string) (*Config, error) {
 	var c Config
 	if _, err := toml.DecodeFile(path, &c); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("config file not found at %s; run 'gsync init' to create one, or pass -config <path>", path)
+		}
 		return nil, err
 	}
 	// Expand a leading ~ in local_path so a value like "~/backups" resolves to a
