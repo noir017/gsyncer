@@ -158,9 +158,15 @@ func (m runModel) Update(msg tea.Msg) (runModel, tea.Cmd) {
 		return m, tickCmd()
 
 	case logLineMsg:
+		// Follow the tail only if the user was already at the bottom; if they
+		// scrolled up to read, leave their position alone. Sample AtBottom()
+		// BEFORE SetContent, since adding a line shifts what counts as bottom.
+		atBottom := m.vp.AtBottom()
 		m.lines = append(m.lines, msg.text)
 		m.refreshContent()
-		m.vp.GotoBottom()
+		if atBottom {
+			m.vp.GotoBottom()
+		}
 		return m, waitForMsg(m.ch)
 
 	case runDoneMsg:

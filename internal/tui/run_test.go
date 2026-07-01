@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,44 @@ import (
 	"gsync/internal/execx"
 	"gsync/internal/syncer"
 )
+
+// fillRun resizes to a small viewport and pushes enough lines to overflow it.
+func fillRun(t *testing.T) runModel {
+	t.Helper()
+	m := newTestRun()
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 40, Height: 10})
+	for i := 0; i < 50; i++ {
+		m.ch = make(chan tea.Msg, 1)
+		m, _ = m.Update(logLineMsg{level: "INFO", text: fmt.Sprintf("line %d", i)})
+	}
+	return m
+}
+
+func TestRunPreservesScrollWhenNotAtBottom(t *testing.T) {
+	m := fillRun(t)
+	m.vp.GotoTop()
+	if m.vp.AtBottom() {
+		t.Fatal("precondition: viewport must be scrollable and not at bottom")
+	}
+	off := m.vp.YOffset
+	m.ch = make(chan tea.Msg, 1)
+	m, _ = m.Update(logLineMsg{level: "INFO", text: "arrived while scrolled up"})
+	if m.vp.YOffset != off {
+		t.Fatalf("scroll position moved: YOffset %d -> %d", off, m.vp.YOffset)
+	}
+}
+
+func TestRunFollowsTailWhenAtBottom(t *testing.T) {
+	m := fillRun(t)
+	if !m.vp.AtBottom() {
+		t.Fatal("precondition: should be following at bottom after filling")
+	}
+	m.ch = make(chan tea.Msg, 1)
+	m, _ = m.Update(logLineMsg{level: "INFO", text: "another"})
+	if !m.vp.AtBottom() {
+		t.Fatal("must stay pinned to bottom while following")
+	}
+}
 
 func newTestRun() runModel {
 	return newRun(&config.Config{}, "", "", &execx.FakeRunner{}, nonBtrfsFS, time.Now)
