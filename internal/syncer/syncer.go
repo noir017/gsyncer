@@ -138,7 +138,7 @@ func SyncOne(ctx context.Context, s config.Sync, d config.Defaults, deps Deps, d
 	res.Mode = be.Name()
 	deps.Log.Infof("[%s] snapshot mode: %s", s.Name, be.Name())
 
-	out, err := deps.Runner.Run(ctx, "rsync", buildRsyncArgs(s, port, cur, dryRun, deps.KnownHostsFile)...)
+	out, err := deps.Runner.Run(ctx, "rsync", buildRsyncArgs(s, port, cur, dryRun, s.EffectiveCompress(d), deps.KnownHostsFile)...)
 	if err != nil {
 		if rsyncPartialWarning(out.Code) {
 			// 23/24 mean the transfer mostly succeeded (some files failed or

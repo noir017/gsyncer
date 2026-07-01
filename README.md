@@ -135,6 +135,7 @@ gsync version                    # 版本号
 [defaults]
   ssh_port = 22                  # 条目未指定端口时的默认值（0 表示回退到 22）
   jobs     = 2                   # 并发同步的条目数（0 / 省略表示默认 2）
+  compress = false               # rsync 传输压缩 -z（默认关；条目可覆盖）
   [defaults.retention]           # 条目未覆盖时的默认保留策略
     recent     = 7
     monthly    = 6
@@ -155,6 +156,7 @@ gsync version                    # 版本号
   local_path  = "/data/web"      # 本地目录（必填）
   ignore      = ["__pycache__/", "*.pyc", "node_modules/", ".git/"]
   strict_host_key = false        # false=accept-new，true=严格校验 host key
+  compress    = true             # 可选：覆盖 defaults.compress（该条目启用 -z）
   [sync.retention]               # 可选：覆盖该条目的保留策略（留空字段回退到 defaults）
     recent     = 14
     monthly    = 12
@@ -175,6 +177,7 @@ gsync version                    # 版本号
 | `identity` | | ssh 私钥；填写时该文件必须存在 |
 | `ignore` | | gitignore 风格忽略规则，每行一条 |
 | `strict_host_key` | | `true` 严格校验，`false` 自动接受新主机（默认） |
+| `compress` | | 覆盖 `defaults.compress`：`true` 启用 rsync 压缩 `-z`，`false` 关闭 |
 | `retention` | | 覆盖默认保留策略，未填字段回退到 `defaults.retention` |
 
 ---
@@ -184,7 +187,7 @@ gsync version                    # 版本号
 对每个同步条目，依次执行：
 
 1. **预检**：检查本地 `rsync`、远程 `rsync`（通过 `ssh` 探测）是否可用。
-2. **拉取**：`rsync -a --delete` 把 `user@host:remote_path/` 同步到本地 `local_path/current/`，并应用忽略规则。
+2. **拉取**：`rsync -a --delete` 把 `user@host:remote_path/` 同步到本地 `local_path/current/`，并应用忽略规则。传输恒带 `--partial`（配合 `--partial-dir=.gsync-partial` 断点续传、半成品不落入 `current/`）与 `--numeric-ids`（按数字保留 uid/gid）；`compress` 开启时附加 `-z`。
 3. **快照**：把 `current/` 快照到 `local_path/snapshots/<时间戳>/`
    - 默认用**硬链接**后端：未改动的文件与上一份共享 inode，几乎不额外占空间；
    - 若 `local_path` 在 btrfs 上且系统有 `btrfs` 命令，则用 **btrfs** 子卷快照。
