@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gsync/internal/config"
@@ -13,6 +14,42 @@ import (
 	"gsync/internal/retention"
 	"gsync/internal/snapshot"
 )
+
+// progressInterval throttles how often streamed rsync progress lines are
+// forwarded to the log, so a fast --info=progress2 stream cannot flood the
+// UI channel or bloat the run log.
+const progressInterval = 500 * time.Millisecond
+
+// runRsync executes the rsync transfer. When the runner supports streaming
+// (execx.Real) it forwards throttled progress lines to deps.Log so the run
+// screen updates live; otherwise it falls back to a blocking capture, keeping
+// test fakes and other Runner implementations working unchanged. Either way it
+// returns the full captured Result so parseStats still sees the stats block.
+func runRsync(ctx context.Context, deps Deps, name string, args []string) (execx.Result, error) {
+	sr, ok := deps.Runner.(execx.StreamRunner)
+	if !ok {
+		return deps.Runner.Run(ctx, "rsync", args...)
+	}
+	now := deps.Now
+	if now == nil {
+		now = time.Now
+	}
+	var last time.Time
+	var started bool
+	onLine := func(l string) {
+		l = strings.TrimSpace(l)
+		if l == "" {
+			return
+		}
+		t := now()
+		if started && t.Sub(last) < progressInterval {
+			return
+		}
+		started, last = true, t
+		deps.Log.Infof("[%s] %s", name, l)
+	}
+	return sr.RunStream(ctx, onLine, "rsync", args...)
+}
 
 // Logger is the subset of logging the syncer needs.
 type Logger interface {
@@ -108,7 +145,7 @@ func SyncOne(ctx context.Context, s config.Sync, d config.Defaults, deps Deps, d
 	res.Mode = be.Name()
 	deps.Log.Infof("[%s] snapshot mode: %s", s.Name, be.Name())
 
-	out, err := deps.Runner.Run(ctx, "rsync", buildRsyncArgs(s, port, cur, dryRun, deps.KnownHostsFile)...)
+	out, err := runRsync(ctx, deps, s.Name, buildRsyncArgs(s, port, cur, dryRun, deps.KnownHostsFile))
 	if err != nil {
 		if rsyncPartialWarning(out.Code) {
 			// 23/24 mean the transfer mostly succeeded (some files failed or
