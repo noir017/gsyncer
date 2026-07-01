@@ -16,6 +16,7 @@ import (
 	"gsync/internal/execx"
 	"gsync/internal/logx"
 	"gsync/internal/notify"
+	"gsync/internal/restore"
 	"gsync/internal/snapshot"
 	"gsync/internal/syncer"
 	"gsync/internal/tui"
@@ -79,6 +80,12 @@ func main() {
 		os.Exit(cmdSnapshots(os.Args[2:]))
 	case "prune":
 		os.Exit(cmdPrune(os.Args[2:]))
+	case "restore":
+		os.Exit(cmdRestore(os.Args[2:]))
+	case "status":
+		os.Exit(cmdStatus(os.Args[2:]))
+	case "check":
+		os.Exit(cmdCheck(os.Args[2:]))
 	case "init":
 		os.Exit(cmdInit(os.Args[2:]))
 	default:
@@ -183,6 +190,123 @@ func cmdSync(argv []string) int {
 		}
 	}
 	return 0
+}
+
+func cmdStatus(argv []string) int {
+	fs := flag.NewFlagSet("status", flag.ExitOnError)
+	cfgFlag := fs.String("config", "", "config file path")
+	jsonOut := fs.Bool("json", false, "output JSON")
+	staleHours := fs.Float64("stale-hours", 26,
+		"flag entries whose newest snapshot is older than N hours; >0 makes exit 3 when any entry is stale (0 disables)")
+	_ = fs.Parse(argv)
+	cfg, err := loadConfig(*cfgFlag)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "config:", err)
+		return 1
+	}
+	ctx := context.Background()
+	now := time.Now()
+	sts := make([]EntryStatus, 0, len(cfg.Sync))
+	anyStale := false
+	for _, s := range cfg.Sync {
+		backend := snapshot.Detect(ctx, s.LocalPath, execx.Real{}, snapshot.RealFSType).Name()
+		times, err := snapshot.List(s.LocalPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "status %q: %v\n", s.Name, err)
+		}
+		st := computeStatus(s.Name, backend, times, now, *staleHours)
+		anyStale = anyStale || st.Stale
+		sts = append(sts, st)
+	}
+	if *jsonOut {
+		writeStatusJSON(os.Stdout, sts)
+	} else {
+		writeStatusTable(os.Stdout, sts)
+	}
+	// Non-zero exit lets a cron/monitor treat "backup too old" as an alarm.
+	if *staleHours > 0 && anyStale {
+		return 3
+	}
+	return 0
+}
+
+func cmdRestore(argv []string) int {
+	fs := flag.NewFlagSet("restore", flag.ExitOnError)
+	cfgFlag := fs.String("config", "", "config file path")
+	name := fs.String("name", "", "entry name (required)")
+	at := fs.String("at", "", "snapshot timestamp YYYY-MM-DD_HHMMSS")
+	latest := fs.Bool("latest", false, "restore the newest snapshot")
+	to := fs.String("to", "", "destination directory (required)")
+	force := fs.Bool("force", false, "overwrite destination if it exists")
+	_ = fs.Parse(argv)
+	if *name == "" || *to == "" {
+		fmt.Fprintln(os.Stderr, "restore: --name and --to are required")
+		return 2
+	}
+	// Require exactly one selector: latest xor at.
+	if *latest == (*at != "") {
+		fmt.Fprintln(os.Stderr, "restore: specify exactly one of --at or --latest")
+		return 2
+	}
+	cfg, err := loadConfig(*cfgFlag)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "config:", err)
+		return 1
+	}
+	entries := selectEntries(cfg.Sync, *name, "")
+	if len(entries) == 0 {
+		fmt.Fprintf(os.Stderr, "no entry named %q\n", *name)
+		return 1
+	}
+	entry := entries[0]
+	times, err := snapshot.List(entry.LocalPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "list:", err)
+		return 1
+	}
+	t, err := restore.SelectTime(times, *at, *latest)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "restore:", err)
+		// Help the operator pick a valid timestamp when --at missed.
+		if len(times) > 0 {
+			fmt.Fprintln(os.Stderr, "available snapshots:")
+			for _, av := range times {
+				fmt.Fprintln(os.Stderr, "  "+av.Format(snapshot.TSLayout))
+			}
+		}
+		return 1
+	}
+	ctx, stop := signalCtx()
+	defer stop()
+	snapPath := restore.SnapPath(entry.LocalPath, t)
+	if err := restore.Run(ctx, execx.Real{}, entry.LocalPath, snapPath, *to, *force); err != nil {
+		fmt.Fprintln(os.Stderr, "restore:", err)
+		return 1
+	}
+	fmt.Printf("restored %s (%s) -> %s\n", entry.Name, t.Format(snapshot.TSLayout), *to)
+	return 0
+}
+
+func cmdCheck(argv []string) int {
+	fs := flag.NewFlagSet("check", flag.ExitOnError)
+	cfgFlag := fs.String("config", "", "config file path")
+	_ = fs.Parse(argv)
+	// loadConfig runs Validate and prints any non-fatal warnings to stderr.
+	cfg, err := loadConfig(*cfgFlag)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "config:", err)
+		return 1
+	}
+	fmt.Printf("config OK: %d entr%s\n", len(cfg.Sync), plural(len(cfg.Sync)))
+	return 0
+}
+
+// plural returns "y" for a count of 1 and "ies" otherwise (entr-y / entr-ies).
+func plural(n int) string {
+	if n == 1 {
+		return "y"
+	}
+	return "ies"
 }
 
 func cmdList(argv []string) int {
