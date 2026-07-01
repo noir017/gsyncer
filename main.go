@@ -234,6 +234,7 @@ func cmdPrune(argv []string) int {
 	fs := flag.NewFlagSet("prune", flag.ExitOnError)
 	cfgFlag := fs.String("config", "", "config file path")
 	name := fs.String("name", "", "only this entry")
+	dry := fs.Bool("dry-run", false, "list snapshots that would be deleted, delete nothing")
 	_ = fs.Parse(argv)
 	cfg, err := loadConfig(*cfgFlag)
 	if err != nil {
@@ -257,8 +258,12 @@ func cmdPrune(argv []string) int {
 		if ctx.Err() != nil {
 			break
 		}
-		r := syncer.PruneOne(ctx, s, cfg.Defaults, realDeps(rl, knownHostsPath(*cfgFlag, exeDir())))
-		fmt.Printf("%s: pruned %d (mode %s)\n", r.Name, r.Pruned, r.Mode)
+		r := syncer.PruneOne(ctx, s, cfg.Defaults, realDeps(rl, knownHostsPath(*cfgFlag, exeDir())), *dry)
+		verb := "pruned"
+		if *dry {
+			verb = "would prune"
+		}
+		fmt.Printf("%s: %s %d (mode %s)\n", r.Name, verb, r.Pruned, r.Mode)
 		results = append(results, r)
 	}
 
