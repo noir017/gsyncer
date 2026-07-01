@@ -71,15 +71,22 @@ func List(root string) ([]time.Time, error) {
 // name is free. Bumping (rather than appending a suffix) keeps the name
 // parseable by TSLayout, so List and retention still see the snapshot.
 func nextFreeSnapshotPath(snaps string, ts time.Time) string {
-	for {
+	// Cap the bump so a persistent stat error (e.g. permissions) can't spin
+	// forever; a full day of per-second collisions for one entry is impossible
+	// in practice.
+	for i := 0; i < 86400; i++ {
 		dst := filepath.Join(snaps, ts.Format(TSLayout))
-		if _, err := os.Stat(dst); err != nil {
-			// Does not exist (or cannot be statted); let the caller surface any
-			// real error when it creates the snapshot.
+		_, err := os.Stat(dst)
+		if errors.Is(err, fs.ErrNotExist) {
+			return dst // free
+		}
+		if err != nil {
+			// Unexpected stat error; let the caller surface it on Create.
 			return dst
 		}
 		ts = ts.Add(time.Second)
 	}
+	return filepath.Join(snaps, ts.Format(TSLayout))
 }
 
 // Detect chooses btrfs when root is on a btrfs filesystem and the `btrfs`
