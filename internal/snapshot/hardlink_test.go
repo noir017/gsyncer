@@ -50,6 +50,25 @@ func TestHardlinkCreateInvokesCpAl(t *testing.T) {
 	}
 }
 
+func TestHardlinkCreateAvoidsCollision(t *testing.T) {
+	root := t.TempDir()
+	ts := time.Date(2026, 6, 24, 3, 0, 0, 0, time.UTC)
+	// Simulate a snapshot already taken in the same second.
+	taken := filepath.Join(root, "snapshots", "2026-06-24_030000")
+	if err := os.MkdirAll(taken, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	be := NewHardlink(&execx.FakeRunner{})
+	snap, err := be.Create(context.Background(), root, ts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(root, "snapshots", "2026-06-24_030001")
+	if snap != want {
+		t.Fatalf("snap = %q, want %q (should bump to avoid collision)", snap, want)
+	}
+}
+
 func TestHardlinkNameAndDelete(t *testing.T) {
 	be := NewHardlink(&execx.FakeRunner{})
 	if be.Name() != "hardlink" {

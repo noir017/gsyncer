@@ -54,7 +54,7 @@ func (b *Btrfs) Create(ctx context.Context, root string, ts time.Time) (string, 
 	if err := os.MkdirAll(snaps, 0o755); err != nil {
 		return "", err
 	}
-	dst := filepath.Join(snaps, ts.Format(TSLayout))
+	dst := nextFreeSnapshotPath(snaps, ts)
 	cur := filepath.Join(root, "current")
 	if _, err := b.r.Run(ctx, "btrfs", "subvolume", "snapshot", "-r", cur, dst); err != nil {
 		return "", err

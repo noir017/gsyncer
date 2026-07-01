@@ -36,12 +36,12 @@ type snapsModel struct {
 	status  string
 	backend string
 
-	confirmDelete   bool
-	restoring       bool
-	restoreInput    textinput.Model
+	confirmDelete    bool
+	restoring        bool
+	restoreInput     textinput.Model
 	confirmOverwrite bool
-	pendingSrc      string
-	pendingDst      string
+	pendingSrc       string
+	pendingDst       string
 }
 
 func newSnaps(entry config.Sync, defaults config.Defaults, runner execx.Runner, fsType snapshot.FSTypeFunc) snapsModel {
