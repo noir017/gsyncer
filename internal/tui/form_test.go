@@ -5,8 +5,33 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"gsync/internal/config"
 )
+
+func TestFormAppliesSize(t *testing.T) {
+	m := newForm(baseCfg(), "x", 0)
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	if m.width != 100 || m.height != 40 {
+		t.Fatalf("size not stored: %dx%d", m.width, m.height)
+	}
+	if want := clampMin(100-14, 10); m.inputs[fName].Width != want {
+		t.Fatalf("input width = %d, want %d", m.inputs[fName].Width, want)
+	}
+	if m.paste.Width != clampMin(100-14, 10) {
+		t.Fatalf("paste width = %d", m.paste.Width)
+	}
+}
+
+func TestFormSizeClampsTinyTerminal(t *testing.T) {
+	// A tiny terminal must not produce a zero/negative width (textarea panics).
+	m := newForm(baseCfg(), "x", 0)
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 4, Height: 3})
+	if m.inputs[fName].Width < 10 {
+		t.Fatalf("input width must be clamped to a minimum, got %d", m.inputs[fName].Width)
+	}
+}
 
 func baseCfg() *config.Config {
 	return &config.Config{
