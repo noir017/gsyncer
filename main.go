@@ -67,12 +67,13 @@ func loadConfig(cfgFlag string) (*config.Config, error) {
 	return config.Load(resolveConfigPath(cfgFlag, exeDir()))
 }
 
-func realDeps(log syncer.Logger) syncer.Deps {
+func realDeps(log syncer.Logger, knownHosts string) syncer.Deps {
 	return syncer.Deps{
-		Runner: execx.Real{},
-		FSType: snapshot.RealFSType,
-		Log:    log,
-		Now:    time.Now,
+		Runner:         execx.Real{},
+		FSType:         snapshot.RealFSType,
+		Log:            log,
+		Now:            time.Now,
+		KnownHostsFile: knownHosts,
 	}
 }
 
@@ -101,7 +102,7 @@ func cmdSync(argv []string) int {
 	ctx, stop := signalCtx()
 	defer stop()
 	entries := selectEntries(cfg.Sync, *name, *server)
-	results := syncer.SyncMany(ctx, entries, cfg.Defaults, realDeps(rl), *dry)
+	results := syncer.SyncMany(ctx, entries, cfg.Defaults, realDeps(rl, knownHostsPath(*cfgFlag, exeDir())), *dry)
 
 	line := summaryLine(results, time.Since(start))
 	rl.Infof("%s", line)
@@ -189,7 +190,7 @@ func cmdPrune(argv []string) int {
 		if ctx.Err() != nil {
 			break
 		}
-		r := syncer.PruneOne(ctx, s, cfg.Defaults, realDeps(rl))
+		r := syncer.PruneOne(ctx, s, cfg.Defaults, realDeps(rl, knownHostsPath(*cfgFlag, exeDir())))
 		fmt.Printf("%s: pruned %d (mode %s)\n", r.Name, r.Pruned, r.Mode)
 		results = append(results, r)
 	}

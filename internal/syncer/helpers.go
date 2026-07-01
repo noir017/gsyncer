@@ -62,10 +62,27 @@ func strictOpt(strict bool) string {
 	return "StrictHostKeyChecking=accept-new"
 }
 
+// knownHostsOpts pins the known_hosts store so host keys learned on the first
+// contact persist across (cron) runs — without this the store is effectively
+// empty every run and accept-new trusts on first sight every time, leaving the
+// --delete mirror open to a MITM feeding forged content. GlobalKnownHostsFile
+// is disabled so only our per-config store is consulted. Returned as flat
+// -o pairs; empty when no path is configured.
+func knownHostsOpts(knownHosts string) []string {
+	if knownHosts == "" {
+		return nil
+	}
+	return []string{
+		"-o", "UserKnownHostsFile=" + knownHosts,
+		"-o", "GlobalKnownHostsFile=/dev/null",
+	}
+}
+
 // sshOptArg builds the single string passed to rsync's -e option.
-func sshOptArg(identity string, port int, strict bool) string {
+func sshOptArg(identity string, port int, strict bool, knownHosts string) string {
 	parts := []string{"ssh", "-p", strconv.Itoa(port), "-o", "BatchMode=yes",
 		"-o", "ConnectTimeout=" + strconv.Itoa(sshConnectTimeout), "-o", strictOpt(strict)}
+	parts = append(parts, knownHostsOpts(knownHosts)...)
 	if identity != "" {
 		parts = append(parts, "-i", config.ExpandHome(identity))
 	}
@@ -73,9 +90,10 @@ func sshOptArg(identity string, port int, strict bool) string {
 }
 
 // sshCmdArgs builds args for invoking ssh directly (used by preflight).
-func sshCmdArgs(identity string, port int, strict bool, user, host, remoteCmd string) []string {
+func sshCmdArgs(identity string, port int, strict bool, knownHosts, user, host, remoteCmd string) []string {
 	args := []string{"-p", strconv.Itoa(port), "-o", "BatchMode=yes",
 		"-o", "ConnectTimeout=" + strconv.Itoa(sshConnectTimeout), "-o", strictOpt(strict)}
+	args = append(args, knownHostsOpts(knownHosts)...)
 	if identity != "" {
 		args = append(args, "-i", config.ExpandHome(identity))
 	}
@@ -91,16 +109,19 @@ func ensureTrailingSlash(p string) string {
 	return p + "/"
 }
 
-// buildRsyncArgs assembles the full rsync argument list for one entry.
-func buildRsyncArgs(s config.Sync, port int, currentPath string, dryRun bool) []string {
-	args := []string{"-a", "--delete", "--info=stats2", "--timeout", strconv.Itoa(rsyncIOTimeout)}
+// buildRsyncArgs assembles the full rsync argument list for one entry. The -s
+// (--protect-args) flag stops the remote shell from a second round of
+// word-splitting/globbing on the remote path, so spaces or shell metacharacters
+// in remote_path are transferred literally instead of being re-interpreted.
+func buildRsyncArgs(s config.Sync, port int, currentPath string, dryRun bool, knownHosts string) []string {
+	args := []string{"-a", "-s", "--delete", "--info=stats2", "--timeout", strconv.Itoa(rsyncIOTimeout)}
 	if dryRun {
 		args = append(args, "-n")
 	}
 	for _, f := range ignore.ToRsyncFilters(s.Ignore) {
 		args = append(args, "--filter", f)
 	}
-	args = append(args, "-e", sshOptArg(s.Identity, port, s.StrictHostKey))
+	args = append(args, "-e", sshOptArg(s.Identity, port, s.StrictHostKey, knownHosts))
 	src := fmt.Sprintf("%s@%s:%s", s.User, s.Host, ensureTrailingSlash(s.RemotePath))
 	args = append(args, src, ensureTrailingSlash(currentPath))
 	return args

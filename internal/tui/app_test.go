@@ -110,7 +110,7 @@ func syncerResultFor(name string, ok bool) syncer.Result { return syncer.Result{
 func TestAppRunDoneUpdatesListDots(t *testing.T) {
 	app := newTestApp(twoEntryCfg(), "x")
 	app.screen = screenRun
-	app.run = newRun(app.cfg, "", app.runner, app.fsType, app.now)
+	app.run = newRun(app.cfg, app.cfgPath, "", app.runner, app.fsType, app.now)
 	app.Update(runDoneMsg{results: []syncer.Result{syncerResultFor("a", true)}})
 	if app.list.lastRun["a"] != runOK {
 		t.Fatal("list dot should be runOK after run")

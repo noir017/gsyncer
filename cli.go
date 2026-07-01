@@ -17,6 +17,12 @@ func resolveConfigPath(flag, exeDir string) string {
 	return filepath.Join(exeDir, "config.toml")
 }
 
+// knownHostsPath returns the per-config ssh known_hosts store, kept alongside
+// the config file so it persists across cron runs.
+func knownHostsPath(cfgFlag, exeDir string) string {
+	return filepath.Join(filepath.Dir(resolveConfigPath(cfgFlag, exeDir)), "known_hosts")
+}
+
 // selectEntries filters by entry name and/or server host. Empty filters match all.
 func selectEntries(all []config.Sync, name, server string) []config.Sync {
 	var out []config.Sync
