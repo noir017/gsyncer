@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -47,11 +48,12 @@ func waitForMsg(ch <-chan tea.Msg) tea.Cmd {
 }
 
 type runModel struct {
-	cfg    *config.Config
-	logDir string
-	runner execx.Runner
-	fsType snapshot.FSTypeFunc
-	now    func() time.Time
+	cfg     *config.Config
+	cfgPath string
+	logDir  string
+	runner  execx.Runner
+	fsType  snapshot.FSTypeFunc
+	now     func() time.Time
 
 	vp         viewport.Model
 	lines      []string
@@ -63,9 +65,9 @@ type runModel struct {
 	title      string
 }
 
-func newRun(cfg *config.Config, logDir string, runner execx.Runner, fsType snapshot.FSTypeFunc, now func() time.Time) runModel {
+func newRun(cfg *config.Config, cfgPath, logDir string, runner execx.Runner, fsType snapshot.FSTypeFunc, now func() time.Time) runModel {
 	return runModel{
-		cfg: cfg, logDir: logDir, runner: runner, fsType: fsType, now: now,
+		cfg: cfg, cfgPath: cfgPath, logDir: logDir, runner: runner, fsType: fsType, now: now,
 		vp: viewport.New(60, 12),
 	}
 }
@@ -89,7 +91,8 @@ func (m *runModel) start(entries []config.Sync, dryRun bool) tea.Cmd {
 		if rl != nil {
 			lg = teeLogger{a: chanLogger{ch}, b: rl}
 		}
-		deps := syncer.Deps{Runner: m.runner, FSType: m.fsType, Now: m.now, Log: lg}
+		deps := syncer.Deps{Runner: m.runner, FSType: m.fsType, Now: m.now, Log: lg,
+			KnownHostsFile: filepath.Join(filepath.Dir(m.cfgPath), "known_hosts")}
 		results := syncer.SyncMany(ctx, entries, m.cfg.Defaults, deps, dryRun)
 		dur := m.now().Sub(start)
 		line := summarize(results, dur)

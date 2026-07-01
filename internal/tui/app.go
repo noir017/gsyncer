@@ -88,7 +88,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case runEntriesMsg:
-		a.run = newRun(a.cfg, a.logDir, a.runner, a.fsType, a.now)
+		a.run = newRun(a.cfg, a.cfgPath, a.logDir, a.runner, a.fsType, a.now)
 		if a.width > 0 {
 			a.run, _ = a.run.Update(tea.WindowSizeMsg{Width: a.width, Height: a.height})
 		}
