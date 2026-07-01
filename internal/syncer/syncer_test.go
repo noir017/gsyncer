@@ -287,5 +287,56 @@ func TestSyncOneFallsBackWhenCurrentNotSubvolume(t *testing.T) {
 	}
 }
 
+// When current IS a valid subvolume but `btrfs subvolume snapshot` fails (e.g.
+// quota exhausted), SyncOne must fall back to a hardlink snapshot rather than
+// abort with no backup for this run.
+func TestSyncOneBtrfsCreateFallsBackToHardlink(t *testing.T) {
+	s := okEntry(t)
+	fr := &execx.FakeRunner{Handler: func(name string, args []string) (execx.Result, error) {
+		if name == "rsync" && len(args) == 1 && args[0] == "--version" {
+			return execx.Result{Stdout: "v"}, nil
+		}
+		if name == "ssh" {
+			return execx.Result{}, nil
+		}
+		if name == "btrfs" && len(args) >= 1 && args[0] == "--version" {
+			return execx.Result{}, nil // btrfs available -> Detect picks btrfs
+		}
+		if name == "btrfs" && len(args) >= 2 && args[1] == "show" {
+			return execx.Result{}, nil // current is a valid subvolume
+		}
+		if name == "btrfs" && len(args) >= 2 && args[1] == "snapshot" {
+			return execx.Result{Code: 1}, errors.New("quota exceeded") // Create fails
+		}
+		if name == "rsync" {
+			return execx.Result{Stdout: "Number of regular files transferred: 2\n"}, nil
+		}
+		if name == "cp" {
+			_ = os.MkdirAll(args[2], 0o755) // emulate hardlink fallback copy
+			return execx.Result{}, nil
+		}
+		return execx.Result{}, nil
+	}}
+	// current must already exist as a subvolume so EnsureCurrent takes the
+	// `subvolume show` (ok) path rather than trying to create one.
+	if err := os.MkdirAll(filepath.Join(s.LocalPath, "current"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	btrfsFS := func(string) (int64, error) { return snapshot.BtrfsMagic, nil }
+	d := config.Defaults{Retention: config.Retention{Recent: 5}}
+	deps := Deps{Runner: fr, FSType: btrfsFS, Log: &captureLog{},
+		Now: func() time.Time { return time.Date(2026, 6, 24, 3, 0, 0, 0, time.UTC) }}
+	res := SyncOne(context.Background(), s, d, deps, false)
+	if !res.OK || res.Err != nil {
+		t.Fatalf("expected fallback success, res = %+v", res)
+	}
+	if res.Mode != "hardlink" {
+		t.Fatalf("expected mode hardlink after btrfs Create failure, got %q", res.Mode)
+	}
+	if _, err := os.Stat(filepath.Join(s.LocalPath, "snapshots", "2026-06-24_030000")); err != nil {
+		t.Fatalf("hardlink fallback snapshot not created: %v", err)
+	}
+}
+
 // fmtSprintf wraps fmt.Sprintf so the helper above stays terse.
 func fmtSprintf(f string, a []any) string { return fmtSprintfImpl(f, a) }
