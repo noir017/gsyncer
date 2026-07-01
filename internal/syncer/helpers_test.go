@@ -42,18 +42,6 @@ func TestSSHOptArg(t *testing.T) {
 	}
 }
 
-func TestSSHCmdArgs(t *testing.T) {
-	args := sshCmdArgs("/k", 22, false, "/cfg/known_hosts", "u", "h", "command -v rsync")
-	j := strings.Join(args, " ")
-	if !strings.Contains(j, "-p 22") || !strings.Contains(j, "-i /k") ||
-		!strings.Contains(j, "ConnectTimeout=10") ||
-		!strings.Contains(j, "UserKnownHostsFile=/cfg/known_hosts") ||
-		!strings.Contains(j, "GlobalKnownHostsFile=/dev/null") ||
-		!strings.HasSuffix(j, "u@h command -v rsync") {
-		t.Fatalf("cmd args = %v", args)
-	}
-}
-
 func TestBuildRsyncArgs(t *testing.T) {
 	s := config.Sync{
 		User: "u", Host: "h", RemotePath: "/src", Ignore: []string{"*.log"},

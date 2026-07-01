@@ -116,12 +116,10 @@ func SyncOne(ctx context.Context, s config.Sync, d config.Defaults, deps Deps, d
 		res.Err = err
 		return res
 	}
-	if _, err := deps.Runner.Run(ctx, "ssh",
-		sshCmdArgs(s.Identity, port, s.StrictHostKey, deps.KnownHostsFile, s.User, s.Host, "command -v rsync")...); err != nil {
-		deps.Log.Errorf("[%s] remote rsync missing on %s: %s", s.Name, s.Host, installHint())
-		res.Err = err
-		return res
-	}
+	// No separate remote `command -v rsync` probe: it cost a full extra ssh
+	// handshake per entry, and rsync's own run already fails clearly when the
+	// remote rsync is missing (exit 127 / "command not found"), which we detect
+	// below and annotate with the same install hint.
 
 	be := snapshot.Detect(ctx, s.LocalPath, deps.Runner, deps.FSType)
 	cur, err := be.EnsureCurrent(ctx, s.LocalPath)
@@ -146,6 +144,9 @@ func SyncOne(ctx context.Context, s config.Sync, d config.Defaults, deps Deps, d
 			// and still snapshot, rather than skipping the backup entirely.
 			deps.Log.Errorf("[%s] rsync completed with warnings (exit %d), continuing: %s", s.Name, out.Code, out.Stderr)
 		} else {
+			if remoteRsyncMissing(out) {
+				deps.Log.Errorf("[%s] remote rsync missing on %s: %s", s.Name, s.Host, installHint())
+			}
 			deps.Log.Errorf("[%s] rsync failed: %v: %s", s.Name, err, out.Stderr)
 			res.Err = err
 			return res

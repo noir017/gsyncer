@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"gsync/internal/config"
+	"gsync/internal/execx"
 	"gsync/internal/ignore"
 )
 
@@ -89,18 +90,6 @@ func sshOptArg(identity string, port int, strict bool, knownHosts string) string
 	return strings.Join(parts, " ")
 }
 
-// sshCmdArgs builds args for invoking ssh directly (used by preflight).
-func sshCmdArgs(identity string, port int, strict bool, knownHosts, user, host, remoteCmd string) []string {
-	args := []string{"-p", strconv.Itoa(port), "-o", "BatchMode=yes",
-		"-o", "ConnectTimeout=" + strconv.Itoa(sshConnectTimeout), "-o", strictOpt(strict)}
-	args = append(args, knownHostsOpts(knownHosts)...)
-	if identity != "" {
-		args = append(args, "-i", config.ExpandHome(identity))
-	}
-	args = append(args, fmt.Sprintf("%s@%s", user, host), remoteCmd)
-	return args
-}
-
 // ensureTrailingSlash guarantees a trailing slash (rsync dir-content semantics).
 func ensureTrailingSlash(p string) string {
 	if strings.HasSuffix(p, "/") {
@@ -144,6 +133,18 @@ func buildRsyncArgs(s config.Sync, port int, currentPath string, dryRun, compres
 	src := fmt.Sprintf("%s@%s:%s", s.User, s.Host, ensureTrailingSlash(s.RemotePath))
 	args = append(args, src, ensureTrailingSlash(currentPath))
 	return args
+}
+
+// remoteRsyncMissing reports whether a failed rsync run looks like the remote
+// host is missing the rsync binary. When the remote shell can't find rsync it
+// prints "command not found" and the client exits 127, so we can surface the
+// same install hint the (now removed) preflight probe used to give.
+func remoteRsyncMissing(out execx.Result) bool {
+	if out.Code == 127 {
+		return true
+	}
+	e := out.Stderr
+	return strings.Contains(e, "command not found") || strings.Contains(e, "rsync: not found")
 }
 
 // installHint returns a multi-package-manager hint for installing rsync.
