@@ -145,6 +145,59 @@ local_path = "~/backups/web"
 	}
 }
 
+func TestValidateRejectsControlCharsInPaths(t *testing.T) {
+	// LocalPath stays absolute so the abs-path check never masks the control-char
+	// check we are exercising.
+	cases := []struct {
+		name          string
+		remote, local string
+	}{
+		{"newline in remote_path", "/r\n/etc", "/l"},
+		{"NUL in remote_path", "/r\x00", "/l"},
+		{"control char in local_path", "/r", "/l\x1b"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Config{Sync: []Sync{
+				{Name: "a", Host: "h", User: "u", RemotePath: tc.remote, LocalPath: tc.local},
+			}}
+			if err := c.Validate(); err == nil {
+				t.Fatalf("expected control-char rejection for %q/%q", tc.remote, tc.local)
+			}
+		})
+	}
+}
+
+func TestValidateWarnsOnOverPermissiveIdentity(t *testing.T) {
+	dir := t.TempDir()
+	key := filepath.Join(dir, "id")
+	if err := os.WriteFile(key, []byte("x"), 0o644); err != nil { // group/other readable
+		t.Fatal(err)
+	}
+	c := &Config{Sync: []Sync{
+		{Name: "a", Host: "h", User: "u", Identity: key, RemotePath: "/r", LocalPath: "/l"},
+	}}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("over-permissive key must warn, not error: %v", err)
+	}
+	if len(c.Warnings) == 0 {
+		t.Fatal("expected a warning for 0644 identity key")
+	}
+}
+
+func TestValidateNoWarningForPrivateIdentity(t *testing.T) {
+	key := writeKey(t) // written 0600
+	c := &Config{Sync: []Sync{
+		{Name: "a", Host: "h", User: "u", Identity: key, RemotePath: "/r", LocalPath: "/l"},
+	}}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if len(c.Warnings) != 0 {
+		t.Fatalf("unexpected warnings for 0600 key: %v", c.Warnings)
+	}
+}
+
 func TestSaveRoundTrip(t *testing.T) {
 	key := writeKey(t)
 	dir := t.TempDir()
