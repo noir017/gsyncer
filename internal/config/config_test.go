@@ -185,6 +185,19 @@ func TestValidateWarnsOnOverPermissiveIdentity(t *testing.T) {
 	}
 }
 
+func TestValidateWarnsOnMissingIdentity(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "no-such-key")
+	c := &Config{Sync: []Sync{
+		{Name: "a", Host: "h", User: "u", Identity: missing, RemotePath: "/r", LocalPath: "/l"},
+	}}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("inaccessible identity must warn, not error: %v", err)
+	}
+	if len(c.Warnings) == 0 {
+		t.Fatal("expected a warning for a missing identity file")
+	}
+}
+
 func TestValidateNoWarningForPrivateIdentity(t *testing.T) {
 	key := writeKey(t) // written 0600
 	c := &Config{Sync: []Sync{
