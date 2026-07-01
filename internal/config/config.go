@@ -70,6 +70,21 @@ type LogConfig struct {
 	KeepCount int `toml:"keep_count"`
 }
 
+// NotifyConfig controls run-completion notifications. The zero value is silent
+// (both switches off, no webhook/command), so adding this table is backward
+// compatible: existing configs keep behaving exactly as before.
+type NotifyConfig struct {
+	// OnFailure/OnSuccess gate when a notification fires. A run is a failure
+	// when any entry failed (skipped-only runs count as success).
+	OnFailure bool `toml:"on_failure"`
+	OnSuccess bool `toml:"on_success"`
+	// Webhook, if set, receives a POST with a JSON body describing the run.
+	Webhook string `toml:"webhook"`
+	// Command, if set, is run via `sh -c`; run metadata is passed as GSYNC_*
+	// environment variables (see internal/notify).
+	Command string `toml:"command"`
+}
+
 // Defaults holds project-wide defaults.
 type Defaults struct {
 	SSHPort   int       `toml:"ssh_port"`
@@ -92,9 +107,10 @@ type Sync struct {
 
 // Config is the whole file.
 type Config struct {
-	Defaults Defaults  `toml:"defaults"`
-	Log      LogConfig `toml:"log"`
-	Sync     []Sync    `toml:"sync"`
+	Defaults Defaults     `toml:"defaults"`
+	Log      LogConfig    `toml:"log"`
+	Notify   NotifyConfig `toml:"notify"`
+	Sync     []Sync       `toml:"sync"`
 	// Warnings holds non-fatal issues surfaced at load time (e.g. an
 	// over-permissive identity key). Not persisted: toml:"-" keeps Save from
 	// writing it back into the config file.
@@ -251,6 +267,17 @@ func (c *Config) Validate() error {
 	for _, s := range c.Sync {
 		if err := checkRetention(fmt.Sprintf("sync %q", s.Name), s.EffectiveRetention(c.Defaults)); err != nil {
 			return err
+		}
+	}
+	if w := c.Notify.Webhook; w != "" {
+		// The webhook URL is used verbatim in an HTTP request; reject control
+		// characters (CR/LF could enable header/request smuggling) and require an
+		// http(s) scheme so a typo fails at load, not silently at notify time.
+		if hasCtrlOrNUL(w) {
+			return fmt.Errorf("notify: webhook contains a NUL or control character")
+		}
+		if !strings.HasPrefix(w, "http://") && !strings.HasPrefix(w, "https://") {
+			return fmt.Errorf("notify: webhook must start with http:// or https://, got %q", w)
 		}
 	}
 	return nil
