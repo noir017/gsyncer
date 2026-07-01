@@ -15,6 +15,7 @@ import (
 	"gsync/internal/config"
 	"gsync/internal/execx"
 	"gsync/internal/logx"
+	"gsync/internal/notify"
 	"gsync/internal/snapshot"
 	"gsync/internal/syncer"
 	"gsync/internal/tui"
@@ -162,6 +163,19 @@ func cmdSync(argv []string) int {
 	_ = logx.AppendSummary(logDir, start.Format("2006-01-02 15:04:05")+" "+line)
 	_ = logx.Cleanup(logDir, cfg.Log.KeepDays, cfg.Log.KeepCount, time.Now())
 	fmt.Println(line)
+
+	// Notify after the run. Use a fresh, bounded context so a notification still
+	// goes out even when the run's own context was cancelled (ctrl+c / timeout) —
+	// a cancelled run is exactly when a failure alert matters most.
+	payload := notify.Build(results, entries, time.Since(start))
+	if notify.ShouldSend(cfg.Notify, payload) {
+		nctx, ncancel := context.WithTimeout(context.Background(), 15*time.Second)
+		if err := notify.Send(nctx, cfg.Notify, payload, nil, execx.Real{}); err != nil {
+			fmt.Fprintln(os.Stderr, "notify:", err)
+			rl.Errorf("notify: %v", err)
+		}
+		ncancel()
+	}
 
 	for _, r := range results {
 		if !r.OK && !r.Skipped {

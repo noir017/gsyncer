@@ -141,6 +141,27 @@ func TestValidateRejectsRootLocalPath(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsBadWebhookScheme(t *testing.T) {
+	c := &Config{Notify: NotifyConfig{Webhook: "ftp://example.com/hook"}}
+	if err := c.Validate(); err == nil {
+		t.Fatal("expected error for non-http(s) webhook scheme")
+	}
+}
+
+func TestValidateRejectsControlCharInWebhook(t *testing.T) {
+	c := &Config{Notify: NotifyConfig{Webhook: "https://example.com/\r\nX-Evil: 1"}}
+	if err := c.Validate(); err == nil {
+		t.Fatal("expected error for control chars in webhook")
+	}
+}
+
+func TestValidateAcceptsHTTPSWebhook(t *testing.T) {
+	c := &Config{Notify: NotifyConfig{OnFailure: true, Webhook: "https://example.com/hook"}}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("valid webhook rejected: %v", err)
+	}
+}
+
 func TestLoadExpandsTildeLocalPath(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {
