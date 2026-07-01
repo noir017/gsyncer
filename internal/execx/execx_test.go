@@ -117,4 +117,26 @@ func TestFakeRunnerRecordsAndResponds(t *testing.T) {
 	if len(f.Calls) != 1 || f.Calls[0].Name != "rsync" || f.Calls[0].Args[0] != "--version" {
 		t.Fatalf("calls not recorded: %+v", f.Calls)
 	}
+	if f.Calls[0].Env != nil {
+		t.Fatalf("Run should record nil env, got %v", f.Calls[0].Env)
+	}
+}
+
+func TestRealRunEnvInjectsVars(t *testing.T) {
+	var r Real
+	res, err := r.RunEnv(context.Background(), []string{"GSYNC_TEST=hi"}, "sh", "-c", "echo $GSYNC_TEST")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if strings.TrimSpace(res.Stdout) != "hi" {
+		t.Fatalf("GSYNC_TEST = %q, want hi", strings.TrimSpace(res.Stdout))
+	}
+}
+
+func TestFakeRunnerRecordsEnv(t *testing.T) {
+	f := &FakeRunner{}
+	_, _ = f.RunEnv(context.Background(), []string{"GSYNC_NAME=web"}, "sh", "-c", "true")
+	if len(f.Calls) != 1 || len(f.Calls[0].Env) != 1 || f.Calls[0].Env[0] != "GSYNC_NAME=web" {
+		t.Fatalf("env not recorded: %+v", f.Calls)
+	}
 }
