@@ -212,6 +212,11 @@ gsync help                       # 显示帮助（也支持 -h / --help）
 `GSYNC_HOST`、`GSYNC_USER`、`GSYNC_REMOTE_PATH`、`GSYNC_LOCAL_PATH`、`GSYNC_PHASE`；
 `post_sync` 另有 `GSYNC_SNAPSHOT` / `GSYNC_FILES` / `GSYNC_BYTES`。预演（`--dry-run`）不执行钩子。
 
+> ⚠️ 钩子**不是事务性**的：`post_sync` 只在同步全程成功后运行。若 `pre_sync` 成功
+> 后中途失败（rsync/快照报错），`post_sync` 不会执行。因此若用 `pre_sync` 停服务、
+> `post_sync` 重启，中途失败会让服务停着。请让 `pre_sync` 的副作用可自恢复（例如用
+> systemd 的 `RuntimeMaxSec` 自动重启），或把停/启逻辑放在 gsync 之外统一编排。
+
 ### `[notify]` 字段
 
 | 字段 | 说明 |

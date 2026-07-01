@@ -80,6 +80,36 @@ func TestRunRefusesCurrentDir(t *testing.T) {
 	}
 }
 
+// A relative --to that resolves to the entry's current/ (e.g. run from inside
+// localPath as `--to current --force`) must still hit the guard, not delete it.
+func TestRunRefusesRelativeCurrentDir(t *testing.T) {
+	local := t.TempDir()
+	cur := filepath.Join(local, "current")
+	if err := os.MkdirAll(cur, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(cur, "live.txt")
+	if err := os.WriteFile(marker, []byte("live"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(local); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(orig)
+
+	fr := cpFake()
+	if err := Run(context.Background(), fr, local, "/snap", "current", true); err == nil {
+		t.Fatal("expected refusal for relative --to current")
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("live current/ must not be deleted: %v", err)
+	}
+}
+
 func TestRunRefusesExistingWithoutForce(t *testing.T) {
 	local := t.TempDir()
 	dst := filepath.Join(local, "dest")
