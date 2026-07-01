@@ -179,7 +179,12 @@ func SyncOne(ctx context.Context, s config.Sync, d config.Defaults, deps Deps, d
 		return res
 	}
 	res.Snapshot = snap
-	deps.Log.Infof("[%s] snapshot created: %s", s.Name, snap)
+	// The hardlink backend upgrades to reflink copies on CoW filesystems; surface
+	// the technique actually used (reflink vs hardlink) now that Create has run.
+	if mr, ok := be.(interface{ Mode() string }); ok {
+		res.Mode = mr.Mode()
+	}
+	deps.Log.Infof("[%s] snapshot created: %s (%s)", s.Name, snap, res.Mode)
 
 	times, err := be.List(s.LocalPath)
 	if err != nil {
