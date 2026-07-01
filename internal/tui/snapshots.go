@@ -42,6 +42,14 @@ type snapsModel struct {
 	confirmOverwrite bool
 	pendingSrc       string
 	pendingDst       string
+	confirmPrune     bool
+	pendingPruneN    int
+}
+
+// pruneDeps builds the syncer dependencies used for both counting and pruning,
+// so the confirmed count matches what PruneOne actually deletes.
+func (m snapsModel) pruneDeps() syncer.Deps {
+	return syncer.Deps{Runner: m.runner, FSType: m.fsType, Now: time.Now, Log: nopLogger{}}
 }
 
 func newSnaps(entry config.Sync, defaults config.Defaults, runner execx.Runner, fsType snapshot.FSTypeFunc) snapsModel {
@@ -112,6 +120,22 @@ func (m snapsModel) Update(msg tea.Msg) (snapsModel, tea.Cmd) {
 			}
 		}
 		m.confirmDelete = false
+		return m, nil
+	}
+
+	if m.confirmPrune {
+		if key.String() == "y" || key.String() == "Y" {
+			res := syncer.PruneOne(context.Background(), m.entry, m.defaults, m.pruneDeps())
+			if res.Err != nil {
+				m.status = "清理失败: " + res.Err.Error()
+			} else {
+				m.status = fmt.Sprintf("已清理 %d 个快照", res.Pruned)
+				m.reload()
+			}
+		} else {
+			m.status = "已取消清理"
+		}
+		m.confirmPrune = false
 		return m, nil
 	}
 
@@ -186,13 +210,14 @@ func (m snapsModel) Update(msg tea.Msg) (snapsModel, tea.Cmd) {
 		}
 		return m, nil
 	case "p":
-		res := syncer.PruneOne(context.Background(), m.entry, m.defaults,
-			syncer.Deps{Runner: m.runner, FSType: m.fsType, Now: time.Now, Log: nopLogger{}})
-		if res.Err != nil {
-			m.status = "清理失败: " + res.Err.Error()
+		n, err := syncer.CountPrunable(context.Background(), m.entry, m.defaults, m.pruneDeps())
+		if err != nil {
+			m.status = "清理失败: " + err.Error()
+		} else if n == 0 {
+			m.status = "无可清理的快照"
 		} else {
-			m.status = fmt.Sprintf("已清理 %d 个快照", res.Pruned)
-			m.reload()
+			m.pendingPruneN = n
+			m.confirmPrune = true
 		}
 		return m, nil
 	case "x":
@@ -222,6 +247,8 @@ func (m snapsModel) View() string {
 	b.WriteString(m.tbl.View() + "\n")
 	if m.restoring {
 		b.WriteString("\n恢复到: " + m.restoreInput.View() + styleHelp.Render("  (enter 确认, esc 取消)"))
+	} else if m.confirmPrune {
+		b.WriteString("\n" + styleErr.Render(fmt.Sprintf("将删除 %d 份，确认？(y/N)", m.pendingPruneN)))
 	} else if m.confirmOverwrite {
 		b.WriteString("\n" + styleErr.Render("目标已存在，覆盖？(y/N)"))
 	} else if m.confirmDelete {

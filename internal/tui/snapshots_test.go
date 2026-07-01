@@ -67,6 +67,76 @@ func TestSnapsDeleteRemovesDir(t *testing.T) {
 	}
 }
 
+func TestSnapsPruneConfirmsBeforeDeleting(t *testing.T) {
+	// three snapshots + an all-zero policy → safety floor keeps the newest,
+	// so two are prunable.
+	e := makeSnaps(t, "2026-06-22_030000", "2026-06-23_030000", "2026-06-24_030000")
+	m := newSnaps(e, config.Defaults{}, &execx.FakeRunner{}, nonBtrfsFS)
+	p0, p1 := m.snapPath(0), m.snapPath(1)
+
+	// 'p' must ARM a confirmation, not delete anything.
+	m, _ = m.Update(keyMsg("p"))
+	if !m.confirmPrune {
+		t.Fatal("p must set confirmPrune")
+	}
+	if m.pendingPruneN != 2 {
+		t.Fatalf("pendingPruneN = %d, want 2", m.pendingPruneN)
+	}
+	if _, err := os.Stat(p0); err != nil {
+		t.Fatal("nothing must be deleted before confirmation")
+	}
+	if !strings.Contains(m.View(), "将删除 2 份") {
+		t.Fatalf("view must show the count prompt, got:\n%s", m.View())
+	}
+
+	// 'y' confirms → deletes the two oldest, keeps the newest.
+	m, _ = m.Update(keyMsg("y"))
+	if m.confirmPrune {
+		t.Fatal("confirmPrune must clear after y")
+	}
+	if _, err := os.Stat(p1); !os.IsNotExist(err) {
+		t.Fatalf("older snapshot should be pruned: %v", err)
+	}
+	if len(m.times) != 1 {
+		t.Fatalf("times after prune = %d, want 1", len(m.times))
+	}
+	if !strings.Contains(m.status, "已清理 2") {
+		t.Fatalf("status = %q", m.status)
+	}
+}
+
+func TestSnapsPruneCancelKeepsAll(t *testing.T) {
+	e := makeSnaps(t, "2026-06-23_030000", "2026-06-24_030000")
+	m := newSnaps(e, config.Defaults{}, &execx.FakeRunner{}, nonBtrfsFS)
+	m, _ = m.Update(keyMsg("p"))
+	if !m.confirmPrune {
+		t.Fatal("precondition: confirmPrune set")
+	}
+	m, _ = m.Update(keyMsg("n"))
+	if m.confirmPrune {
+		t.Fatal("confirmPrune must clear after n")
+	}
+	if len(m.times) != 2 {
+		t.Fatalf("no snapshot may be deleted on cancel, times = %d", len(m.times))
+	}
+	if !strings.Contains(m.status, "已取消") {
+		t.Fatalf("status = %q", m.status)
+	}
+}
+
+func TestSnapsPruneNothingToDo(t *testing.T) {
+	// a single snapshot is always kept by the safety floor → nothing prunable.
+	e := makeSnaps(t, "2026-06-24_030000")
+	m := newSnaps(e, config.Defaults{}, &execx.FakeRunner{}, nonBtrfsFS)
+	m, _ = m.Update(keyMsg("p"))
+	if m.confirmPrune {
+		t.Fatal("no confirmation should arm when nothing is prunable")
+	}
+	if !strings.Contains(m.status, "无可清理") {
+		t.Fatalf("status = %q", m.status)
+	}
+}
+
 func TestSnapsEscEmitsBack(t *testing.T) {
 	e := makeSnaps(t)
 	m := newSnaps(e, config.Defaults{}, &execx.FakeRunner{}, nonBtrfsFS)
