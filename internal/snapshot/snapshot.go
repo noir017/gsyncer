@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -89,11 +90,29 @@ func nextFreeSnapshotPath(snaps string, ts time.Time) string {
 	return filepath.Join(snaps, ts.Format(TSLayout))
 }
 
+var (
+	btrfsOnce sync.Once
+	btrfsOK   bool
+)
+
+// btrfsAvailable reports whether the `btrfs` command works, memoizing the probe
+// for the life of the process. Whether btrfs is installed is a fixed property of
+// the host, but Detect runs once per entry — and with a parallel SyncMany that
+// would fire many redundant `btrfs --version` execs — so we probe at most once.
+// The per-path btrfs filesystem check (statfs) in Detect still runs every time.
+func btrfsAvailable(ctx context.Context, r execx.Runner) bool {
+	btrfsOnce.Do(func() {
+		_, err := r.Run(ctx, "btrfs", "--version")
+		btrfsOK = err == nil
+	})
+	return btrfsOK
+}
+
 // Detect chooses btrfs when root is on a btrfs filesystem and the `btrfs`
 // command is available; otherwise it returns the hardlink backend.
 func Detect(ctx context.Context, root string, r execx.Runner, fsType FSTypeFunc) Backend {
 	if magic, err := fsType(root); err == nil && magic == BtrfsMagic {
-		if _, err := r.Run(ctx, "btrfs", "--version"); err == nil {
+		if btrfsAvailable(ctx, r) {
 			return NewBtrfs(r)
 		}
 	}
