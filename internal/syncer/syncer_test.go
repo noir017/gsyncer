@@ -237,6 +237,68 @@ func TestSyncManyRespectsJobsLimit(t *testing.T) {
 	}
 }
 
+// The remote `command -v rsync` preflight was removed: SyncOne must not invoke
+// ssh directly anymore (rsync runs ssh itself via -e).
+func TestSyncOneNoRemotePreflight(t *testing.T) {
+	s := okEntry(t)
+	fr := &execx.FakeRunner{Handler: func(name string, args []string) (execx.Result, error) {
+		if name == "rsync" && len(args) == 1 && args[0] == "--version" {
+			return execx.Result{Stdout: "v"}, nil
+		}
+		if name == "rsync" {
+			return execx.Result{Stdout: "Number of regular files transferred: 1\n"}, nil
+		}
+		if name == "cp" {
+			_ = os.MkdirAll(args[2], 0o755)
+		}
+		return execx.Result{}, nil
+	}}
+	d := config.Defaults{Retention: config.Retention{Recent: 5}}
+	deps := Deps{Runner: fr, FSType: ext4FS, Log: &captureLog{},
+		Now: func() time.Time { return time.Date(2026, 6, 24, 3, 0, 0, 0, time.UTC) }}
+	res := SyncOne(context.Background(), s, d, deps, false)
+	if !res.OK || res.Err != nil {
+		t.Fatalf("res = %+v", res)
+	}
+	for _, c := range fr.Calls {
+		if c.Name == "ssh" {
+			t.Fatalf("SyncOne must not invoke ssh directly, got %+v", c)
+		}
+	}
+}
+
+// When the remote rsync is missing, rsync exits 127 / prints "command not
+// found"; SyncOne must fail and log the install hint (replacing the old probe).
+func TestSyncOneRemoteRsyncMissing(t *testing.T) {
+	s := okEntry(t)
+	cl := &captureLog{}
+	fr := &execx.FakeRunner{Handler: func(name string, args []string) (execx.Result, error) {
+		if name == "rsync" && len(args) == 1 && args[0] == "--version" {
+			return execx.Result{Stdout: "v"}, nil // local rsync present
+		}
+		if name == "rsync" {
+			return execx.Result{Code: 127, Stderr: "bash: rsync: command not found"},
+				errors.New("exit status 127")
+		}
+		return execx.Result{}, nil
+	}}
+	deps := Deps{Runner: fr, FSType: ext4FS, Log: cl,
+		Now: func() time.Time { return time.Date(2026, 6, 24, 3, 0, 0, 0, time.UTC) }}
+	res := SyncOne(context.Background(), s, config.Defaults{}, deps, false)
+	if res.OK || res.Err == nil {
+		t.Fatalf("expected failure, got %+v", res)
+	}
+	found := false
+	for _, l := range cl.lines {
+		if strings.Contains(l, "remote rsync missing") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected 'remote rsync missing' hint in log, got %v", cl.lines)
+	}
+}
+
 // rsync missing locally -> fail, no snapshot.
 func TestSyncOneLocalRsyncMissing(t *testing.T) {
 	s := okEntry(t)
