@@ -191,9 +191,9 @@ func (m formModel) focusCount() int {
 // parsePaste parses a quick-entry string into form field values, keyed by input
 // index. Two forms are accepted:
 //
-//	1. key=value tokens:  name=foo host=1.2.3.4 port=22 user=root \
-//	   identity=~/.ssh/id remote=/data local=~/data
-//	2. scp shorthand:     [user@]host:/remote/path
+//  1. key=value tokens:  name=foo host=1.2.3.4 port=22 user=root \
+//     identity=~/.ssh/id remote=/data local=~/data
+//  2. scp shorthand:     [user@]host:/remote/path
 func parsePaste(s string) map[int]string {
 	s = strings.TrimSpace(s)
 	out := map[int]string{}

@@ -2,6 +2,7 @@ package execx
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -13,6 +14,18 @@ func TestRealRunCapturesStdout(t *testing.T) {
 	}
 	if res.Stdout != "hello\n" {
 		t.Fatalf("stdout = %q, want %q", res.Stdout, "hello\n")
+	}
+}
+
+func TestRealRunForcesCLocale(t *testing.T) {
+	var r Real
+	// The child sees LC_ALL=C even if the test process has a different locale.
+	res, err := r.Run(context.Background(), "sh", "-c", "echo $LC_ALL")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if strings.TrimSpace(res.Stdout) != "C" {
+		t.Fatalf("LC_ALL = %q, want C", strings.TrimSpace(res.Stdout))
 	}
 }
 

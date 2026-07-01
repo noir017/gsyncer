@@ -65,6 +65,23 @@ func List(root string) ([]time.Time, error) {
 	return out, nil
 }
 
+// nextFreeSnapshotPath returns a path under snaps whose basename does not yet
+// exist. Snapshot names have one-second resolution, so two syncs of the same
+// entry within a second would collide; we bump ts by whole seconds until the
+// name is free. Bumping (rather than appending a suffix) keeps the name
+// parseable by TSLayout, so List and retention still see the snapshot.
+func nextFreeSnapshotPath(snaps string, ts time.Time) string {
+	for {
+		dst := filepath.Join(snaps, ts.Format(TSLayout))
+		if _, err := os.Stat(dst); err != nil {
+			// Does not exist (or cannot be statted); let the caller surface any
+			// real error when it creates the snapshot.
+			return dst
+		}
+		ts = ts.Add(time.Second)
+	}
+}
+
 // Detect chooses btrfs when root is on a btrfs filesystem and the `btrfs`
 // command is available; otherwise it returns the hardlink backend.
 func Detect(ctx context.Context, root string, r execx.Runner, fsType FSTypeFunc) Backend {

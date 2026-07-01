@@ -5,6 +5,7 @@ package execx
 import (
 	"bytes"
 	"context"
+	"os"
 	"os/exec"
 )
 
@@ -26,6 +27,9 @@ type Real struct{}
 // Run implements Runner.
 func (Real) Run(ctx context.Context, name string, args ...string) (Result, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	// Force the C locale so tool output (notably rsync --stats labels and
+	// number formatting) is stable and parseable regardless of the host locale.
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
 	var so, se bytes.Buffer
 	cmd.Stdout = &so
 	cmd.Stderr = &se

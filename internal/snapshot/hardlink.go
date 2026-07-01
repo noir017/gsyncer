@@ -33,7 +33,7 @@ func (h *Hardlink) Create(ctx context.Context, root string, ts time.Time) (strin
 	if err := os.MkdirAll(snaps, 0o755); err != nil {
 		return "", err
 	}
-	dst := filepath.Join(snaps, ts.Format(TSLayout))
+	dst := nextFreeSnapshotPath(snaps, ts)
 	cur := filepath.Join(root, "current")
 	if _, err := h.r.Run(ctx, "cp", "-al", cur, dst); err != nil {
 		return "", err

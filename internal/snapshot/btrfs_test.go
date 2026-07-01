@@ -3,6 +3,7 @@ package snapshot
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -28,6 +29,25 @@ func TestBtrfsCreateInvokesSubvolumeSnapshot(t *testing.T) {
 	if c.Name != "btrfs" || strings.Join(c.Args, " ") != "subvolume snapshot -r "+
 		filepath.Join(root, "current")+" "+want {
 		t.Fatalf("btrfs args = %v", c.Args)
+	}
+}
+
+func TestBtrfsCreateAvoidsCollision(t *testing.T) {
+	root := t.TempDir()
+	ts := time.Date(2026, 6, 24, 3, 0, 0, 0, time.UTC)
+	// Simulate a snapshot subvolume already present for the same second.
+	taken := filepath.Join(root, "snapshots", "2026-06-24_030000")
+	if err := os.MkdirAll(taken, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	be := NewBtrfs(&execx.FakeRunner{})
+	snap, err := be.Create(context.Background(), root, ts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(root, "snapshots", "2026-06-24_030001")
+	if snap != want {
+		t.Fatalf("snap = %q, want %q (should bump to avoid collision)", snap, want)
 	}
 }
 
