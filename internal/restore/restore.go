@@ -49,21 +49,29 @@ func SnapPath(localPath string, t time.Time) string {
 // refuses an existing dst unless force is set; with force it removes dst first
 // so the copy replaces the tree rather than nesting inside it.
 func Run(ctx context.Context, runner execx.Runner, localPath, snapPath, dst string, force bool) error {
+	// Resolve dst to an absolute path before the current/ guard: localPath is
+	// always absolute, so comparing a relative or trailing-slash dst (e.g.
+	// `--to current` run from inside localPath) against it would silently miss
+	// the guard and let --force RemoveAll the live current/ tree.
+	absDst, err := filepath.Abs(dst)
+	if err != nil {
+		return fmt.Errorf("resolve destination: %w", err)
+	}
 	cur := filepath.Clean(filepath.Join(localPath, "current"))
-	if filepath.Clean(dst) == cur {
+	if absDst == cur {
 		return fmt.Errorf("refusing to restore over the current/ directory; choose another --to path")
 	}
-	if _, err := os.Stat(dst); err == nil {
+	if _, err := os.Stat(absDst); err == nil {
 		if !force {
-			return fmt.Errorf("destination %s exists; pass --force to overwrite", dst)
+			return fmt.Errorf("destination %s exists; pass --force to overwrite", absDst)
 		}
 		// A bare `cp -a src dst` into an existing dir nests as dst/<name>/… and
 		// leaves stale files; remove first so the restore is a clean replace.
-		if err := os.RemoveAll(dst); err != nil {
+		if err := os.RemoveAll(absDst); err != nil {
 			return fmt.Errorf("clear destination: %w", err)
 		}
 	}
-	if _, err := runner.Run(ctx, "cp", "-a", snapPath, dst); err != nil {
+	if _, err := runner.Run(ctx, "cp", "-a", snapPath, absDst); err != nil {
 		return fmt.Errorf("cp -a: %w", err)
 	}
 	return nil
