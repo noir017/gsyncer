@@ -6,7 +6,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"gsync/internal/config"
@@ -16,6 +18,13 @@ import (
 	"gsync/internal/syncer"
 	"gsync/internal/tui"
 )
+
+// signalCtx returns a context cancelled on SIGINT/SIGTERM so a cron run can be
+// interrupted cleanly (in-flight rsync is killed via CommandContext and no
+// further entries are launched).
+func signalCtx() (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+}
 
 const version = "0.1.0"
 
@@ -89,8 +98,10 @@ func cmdSync(argv []string) int {
 	}
 	defer rl.Close()
 
+	ctx, stop := signalCtx()
+	defer stop()
 	entries := selectEntries(cfg.Sync, *name, *server)
-	results := syncer.SyncMany(context.Background(), entries, cfg.Defaults, realDeps(rl), *dry)
+	results := syncer.SyncMany(ctx, entries, cfg.Defaults, realDeps(rl), *dry)
 
 	line := summaryLine(results, time.Since(start))
 	rl.Infof("%s", line)
@@ -99,7 +110,7 @@ func cmdSync(argv []string) int {
 	fmt.Println(line)
 
 	for _, r := range results {
-		if !r.OK {
+		if !r.OK && !r.Skipped {
 			return 1
 		}
 	}
@@ -170,10 +181,15 @@ func cmdPrune(argv []string) int {
 	}
 	defer rl.Close()
 
+	ctx, stop := signalCtx()
+	defer stop()
 	entries := selectEntries(cfg.Sync, *name, "")
 	var results []syncer.Result
 	for _, s := range entries {
-		r := syncer.PruneOne(context.Background(), s, cfg.Defaults, realDeps(rl))
+		if ctx.Err() != nil {
+			break
+		}
+		r := syncer.PruneOne(ctx, s, cfg.Defaults, realDeps(rl))
 		fmt.Printf("%s: pruned %d (mode %s)\n", r.Name, r.Pruned, r.Mode)
 		results = append(results, r)
 	}
@@ -185,7 +201,7 @@ func cmdPrune(argv []string) int {
 	fmt.Println(line)
 
 	for _, r := range results {
-		if !r.OK {
+		if !r.OK && !r.Skipped {
 			return 1
 		}
 	}

@@ -32,12 +32,22 @@ type Deps struct {
 type Result struct {
 	Name     string
 	OK       bool
+	Skipped  bool // entry was not run (e.g. another sync holds the lock)
 	Err      error
 	Files    int64
 	Bytes    int64
 	Snapshot string
 	Mode     string
 	Pruned   int
+}
+
+// rsyncPartialWarning reports whether an rsync exit code represents a
+// partial-but-usable transfer that should not abort the pipeline:
+//
+//	23 = partial transfer due to error (some files could not be transferred)
+//	24 = partial transfer due to vanished source files (routine on a live tree)
+func rsyncPartialWarning(code int) bool {
+	return code == 23 || code == 24
 }
 
 func toPolicy(r config.Retention) retention.Policy {
@@ -52,6 +62,21 @@ func toPolicy(r config.Retention) retention.Policy {
 func SyncOne(ctx context.Context, s config.Sync, d config.Defaults, deps Deps, dryRun bool) Result {
 	res := Result{Name: s.Name}
 	port := s.EffectivePort(d)
+
+	// Serialize runs sharing this local root so overlapping cron ticks don't
+	// rsync --delete into the same current/ concurrently.
+	lock, ok, err := acquireLock(s.LocalPath)
+	if err != nil {
+		deps.Log.Errorf("[%s] lock %s: %v", s.Name, s.LocalPath, err)
+		res.Err = err
+		return res
+	}
+	if !ok {
+		deps.Log.Errorf("[%s] another sync is in progress for %s; skipping", s.Name, s.LocalPath)
+		res.Skipped = true
+		return res
+	}
+	defer lock.release()
 
 	if _, err := deps.Runner.Run(ctx, "rsync", "--version"); err != nil {
 		deps.Log.Errorf("[%s] local rsync missing: %s", s.Name, installHint())
@@ -82,9 +107,16 @@ func SyncOne(ctx context.Context, s config.Sync, d config.Defaults, deps Deps, d
 
 	out, err := deps.Runner.Run(ctx, "rsync", buildRsyncArgs(s, port, cur, dryRun)...)
 	if err != nil {
-		deps.Log.Errorf("[%s] rsync failed: %v: %s", s.Name, err, out.Stderr)
-		res.Err = err
-		return res
+		if rsyncPartialWarning(out.Code) {
+			// 23/24 mean the transfer mostly succeeded (some files failed or
+			// vanished mid-copy — routine on a live source). Treat as a warning
+			// and still snapshot, rather than skipping the backup entirely.
+			deps.Log.Errorf("[%s] rsync completed with warnings (exit %d), continuing: %s", s.Name, out.Code, out.Stderr)
+		} else {
+			deps.Log.Errorf("[%s] rsync failed: %v: %s", s.Name, err, out.Stderr)
+			res.Err = err
+			return res
+		}
 	}
 	res.Files, res.Bytes = parseStats(out.Stdout)
 	deps.Log.Infof("[%s] pulled %d files, %d bytes", s.Name, res.Files, res.Bytes)
@@ -129,6 +161,13 @@ func SyncOne(ctx context.Context, s config.Sync, d config.Defaults, deps Deps, d
 func SyncMany(ctx context.Context, entries []config.Sync, d config.Defaults, deps Deps, dryRun bool) []Result {
 	results := make([]Result, 0, len(entries))
 	for _, s := range entries {
+		if ctx.Err() != nil {
+			// The run was cancelled (ctrl+c) or timed out. Stop launching further
+			// entries instead of running them against a dead context, which would
+			// fail preflight immediately and report spurious FAILED results.
+			deps.Log.Errorf("run cancelled; %d entr(ies) skipped", len(entries)-len(results))
+			break
+		}
 		results = append(results, SyncOne(ctx, s, d, deps, dryRun))
 	}
 	return results
