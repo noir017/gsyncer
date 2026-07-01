@@ -112,16 +112,24 @@ const partialDir = ".gsync-partial"
 // restarting from scratch (pairs with the 300s I/O timeout), while confining the
 // in-flight temp files to partialDir; an explicit exclude keeps that dir out of
 // the mirror. --numeric-ids preserves uid/gid verbatim (a faithful backup, and
-// no remote name lookups). -z (compress) is opt-in per entry / default.
-func buildRsyncArgs(s config.Sync, port int, currentPath string, dryRun, compress bool, knownHosts string) []string {
+// no remote name lookups). -z (compress) is opt-in per entry / default; bwlimit
+// throttles the transfer rate (KB/s) when configured.
+func buildRsyncArgs(s config.Sync, port int, currentPath string, dryRun, compress bool, knownHosts string, bwlimit int) []string {
+	// stats2 feeds parseStats (Files/Bytes); progress2 emits an aggregate
+	// progress line that RunStream forwards live to the run screen.
 	args := []string{"-a", "-s", "--delete", "--numeric-ids",
 		"--partial", "--partial-dir=" + partialDir,
-		"--info=stats2", "--timeout", strconv.Itoa(rsyncIOTimeout)}
+		"--info=stats2,progress2", "--timeout", strconv.Itoa(rsyncIOTimeout)}
 	if compress {
 		args = append(args, "-z")
 	}
 	if dryRun {
 		args = append(args, "-n")
+	}
+	// Throttle transfer rate when configured (KB/s); a plain passthrough to
+	// rsync's own --bwlimit so an unattended pull doesn't saturate a link.
+	if bwlimit > 0 {
+		args = append(args, "--bwlimit", strconv.Itoa(bwlimit))
 	}
 	// Exclude the partial-dir first (rsync is first-match-wins) so no user rule
 	// can pull the in-transfer staging dir into the mirror.

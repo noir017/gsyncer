@@ -2,13 +2,51 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/BurntSushi/toml"
 )
+
+// StarterTemplate is a commented example config written by `gsync init`. It
+// decodes to a valid, empty-of-entries config (so `gsync list` works right
+// after init); users uncomment the [[sync]] block to add their first entry.
+const StarterTemplate = `# gsync 配置文件
+# 每个 [[sync]] 块描述一个「远程目录 -> 本地目录」的备份任务。
+# 去掉下面示例块的注释并按需修改即可。
+
+[defaults]
+  ssh_port = 22                    # 未在条目中指定时使用的默认 SSH 端口
+
+  [defaults.retention]             # 默认 GFS 保留策略（条目可覆盖）
+    recent     = 7                 # 保留最近的 7 份快照
+    monthly    = 6                 # 含快照的最近 6 个月各留最新一份
+    semiannual = 2
+    yearly     = 2
+
+[log]
+  keep_days  = 30                  # 运行日志保留天数（0 = 不按天清理）
+  keep_count = 100                 # 运行日志保留份数（0 = 不按份数清理）
+
+# --- 示例条目（去掉注释后启用）---
+# [[sync]]
+#   name        = "web"
+#   host        = "1.2.3.4"
+#   port        = 22
+#   user        = "deploy"
+#   identity    = "~/.ssh/id_ed25519"
+#   remote_path = "/srv/www"
+#   local_path  = "/data/backups/web"   # 必须是绝对路径
+#   strict_host_key = false
+#   ignore      = ["node_modules/", "__pycache__/", "*.log"]
+#
+#   [sync.retention]                    # 可选：覆盖默认保留策略，未填字段回退到 defaults
+#     recent = 14
+`
 
 // Retention is the resolved keep-count for each layer.
 type Retention struct {
@@ -38,11 +76,29 @@ type LogConfig struct {
 // memory/disk/SSH contention. Override via defaults.jobs or `sync --jobs`.
 const defaultJobs = 2
 
+// NotifyConfig controls run-completion notifications. The zero value is silent
+// (both switches off, no webhook/command), so adding this table is backward
+// compatible: existing configs keep behaving exactly as before.
+type NotifyConfig struct {
+	// OnFailure/OnSuccess gate when a notification fires. A run is a failure
+	// when any entry failed (skipped-only runs count as success).
+	OnFailure bool `toml:"on_failure"`
+	OnSuccess bool `toml:"on_success"`
+	// Webhook, if set, receives a POST with a JSON body describing the run.
+	Webhook string `toml:"webhook"`
+	// Command, if set, is run via `sh -c`; run metadata is passed as GSYNC_*
+	// environment variables (see internal/notify).
+	Command string `toml:"command"`
+}
+
 // Defaults holds project-wide defaults.
 type Defaults struct {
 	SSHPort   int       `toml:"ssh_port"`
 	Jobs      int       `toml:"jobs"`
 	Compress  bool      `toml:"compress"`
+	Bwlimit   int       `toml:"bwlimit"`   // rsync --bwlimit in KB/s; 0 = unlimited
+	PreSync   string    `toml:"pre_sync"`  // shell command run before each entry's rsync
+	PostSync  string    `toml:"post_sync"` // shell command run after a successful sync
 	Retention Retention `toml:"retention"`
 }
 
@@ -67,14 +123,18 @@ type Sync struct {
 	Ignore        []string           `toml:"ignore"`
 	StrictHostKey bool               `toml:"strict_host_key"`
 	Compress      *bool              `toml:"compress"`
+	Bwlimit       int                `toml:"bwlimit"`   // overrides defaults.bwlimit; 0 = inherit
+	PreSync       string             `toml:"pre_sync"`  // overrides defaults.pre_sync; "" = inherit
+	PostSync      string             `toml:"post_sync"` // overrides defaults.post_sync; "" = inherit
 	Retention     *RetentionOverride `toml:"retention"`
 }
 
 // Config is the whole file.
 type Config struct {
-	Defaults Defaults  `toml:"defaults"`
-	Log      LogConfig `toml:"log"`
-	Sync     []Sync    `toml:"sync"`
+	Defaults Defaults     `toml:"defaults"`
+	Log      LogConfig    `toml:"log"`
+	Notify   NotifyConfig `toml:"notify"`
+	Sync     []Sync       `toml:"sync"`
 	// Warnings holds non-fatal issues surfaced at load time (e.g. an
 	// over-permissive identity key). Not persisted: toml:"-" keeps Save from
 	// writing it back into the config file.
@@ -85,6 +145,9 @@ type Config struct {
 func Load(path string) (*Config, error) {
 	var c Config
 	if _, err := toml.DecodeFile(path, &c); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("config file not found at %s; run 'gsync init' to create one, or pass -config <path>", path)
+		}
 		return nil, err
 	}
 	// Expand a leading ~ in local_path so a value like "~/backups" resolves to a
@@ -222,12 +285,31 @@ func (c *Config) Validate() error {
 			c.Warnings = append(c.Warnings, fmt.Sprintf("sync %q: %s", s.Name, msg))
 		}
 	}
+	if c.Defaults.Bwlimit < 0 {
+		return fmt.Errorf("defaults: bwlimit must be >= 0")
+	}
+	for _, s := range c.Sync {
+		if s.Bwlimit < 0 {
+			return fmt.Errorf("sync %q: bwlimit must be >= 0", s.Name)
+		}
+	}
 	if err := checkRetention("defaults", c.Defaults.Retention); err != nil {
 		return err
 	}
 	for _, s := range c.Sync {
 		if err := checkRetention(fmt.Sprintf("sync %q", s.Name), s.EffectiveRetention(c.Defaults)); err != nil {
 			return err
+		}
+	}
+	if w := c.Notify.Webhook; w != "" {
+		// The webhook URL is used verbatim in an HTTP request; reject control
+		// characters (CR/LF could enable header/request smuggling) and require an
+		// http(s) scheme so a typo fails at load, not silently at notify time.
+		if hasCtrlOrNUL(w) {
+			return fmt.Errorf("notify: webhook contains a NUL or control character")
+		}
+		if !strings.HasPrefix(w, "http://") && !strings.HasPrefix(w, "https://") {
+			return fmt.Errorf("notify: webhook must start with http:// or https://, got %q", w)
 		}
 	}
 	return nil
@@ -252,6 +334,31 @@ func (s Sync) EffectiveCompress(d Defaults) bool {
 		return *s.Compress
 	}
 	return d.Compress
+}
+
+// EffectiveBwlimit resolves the rsync bandwidth cap (KB/s): entry > defaults.
+// Zero means unlimited.
+func (s Sync) EffectiveBwlimit(d Defaults) int {
+	if s.Bwlimit != 0 {
+		return s.Bwlimit
+	}
+	return d.Bwlimit
+}
+
+// EffectivePreSync resolves the pre-sync hook: entry > defaults ("" = none).
+func (s Sync) EffectivePreSync(d Defaults) string {
+	if s.PreSync != "" {
+		return s.PreSync
+	}
+	return d.PreSync
+}
+
+// EffectivePostSync resolves the post-sync hook: entry > defaults ("" = none).
+func (s Sync) EffectivePostSync(d Defaults) string {
+	if s.PostSync != "" {
+		return s.PostSync
+	}
+	return d.PostSync
 }
 
 // EffectiveRetention merges the entry override over defaults.

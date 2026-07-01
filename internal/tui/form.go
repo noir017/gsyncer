@@ -40,6 +40,8 @@ type formModel struct {
 	cfgPath string
 	origIdx int // -1 == new
 
+	width, height int
+
 	inputs []textinput.Model // numInputs
 	ignore textarea.Model
 	ret    []textinput.Model // 4: recent, monthly, semiannual, yearly
@@ -412,9 +414,33 @@ func (m *formModel) applyFocus() {
 	}
 }
 
+// applySize fits the text controls to the current terminal width/height. Labels
+// occupy a fixed left column ("%-10s "), so inputs are sized to what remains;
+// widths are clamped to a minimum so a tiny terminal cannot produce a
+// zero/negative width.
+func (m *formModel) applySize() {
+	if m.width <= 0 {
+		return
+	}
+	inW := clampMin(m.width-14, 10)
+	for i := range m.inputs {
+		m.inputs[i].Width = inW
+	}
+	m.paste.Width = inW
+	m.ignore.SetWidth(clampMin(m.width-4, 20))
+	if m.height > 0 {
+		m.ignore.SetHeight(clampMin(m.height-16, 3))
+	}
+}
+
 func (m formModel) Init() tea.Cmd { return textinput.Blink }
 
 func (m formModel) Update(msg tea.Msg) (formModel, tea.Cmd) {
+	if sz, ok := msg.(tea.WindowSizeMsg); ok {
+		m.width, m.height = sz.Width, sz.Height
+		m.applySize()
+		return m, nil
+	}
 	key, isKey := msg.(tea.KeyMsg)
 	if isKey && m.confirming {
 		switch key.String() {

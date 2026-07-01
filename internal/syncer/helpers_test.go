@@ -46,7 +46,7 @@ func TestBuildRsyncArgs(t *testing.T) {
 	s := config.Sync{
 		User: "u", Host: "h", RemotePath: "/src", Ignore: []string{"*.log"},
 	}
-	args := buildRsyncArgs(s, 22, "/local/current", false, false, "/cfg/known_hosts")
+	args := buildRsyncArgs(s, 22, "/local/current", false, false, "/cfg/known_hosts", 0)
 	j := strings.Join(args, " ")
 	if !strings.Contains(j, "-a") || !strings.Contains(j, "--delete") ||
 		!strings.Contains(j, "--info=stats2") || !strings.Contains(j, "--timeout 300") {
@@ -84,12 +84,15 @@ func TestBuildRsyncArgs(t *testing.T) {
 	if strings.Contains(j, " -n") {
 		t.Fatalf("dry-run should be off: %v", args)
 	}
-	dry := buildRsyncArgs(s, 22, "/local/current", true, false, "/cfg/known_hosts")
+	if strings.Contains(j, "--bwlimit") {
+		t.Fatalf("bwlimit 0 should add no flag: %v", args)
+	}
+	dry := buildRsyncArgs(s, 22, "/local/current", true, false, "/cfg/known_hosts", 0)
 	if !contains(dry, "-n") {
 		t.Fatalf("dry-run flag missing: %v", dry)
 	}
 	// compress=true adds -z.
-	comp := buildRsyncArgs(s, 22, "/local/current", false, true, "/cfg/known_hosts")
+	comp := buildRsyncArgs(s, 22, "/local/current", false, true, "/cfg/known_hosts", 0)
 	if !contains(comp, "-z") {
 		t.Fatalf("compress flag -z missing when enabled: %v", comp)
 	}
@@ -110,6 +113,24 @@ func TestEffectiveCompress(t *testing.T) {
 	}
 	if (config.Sync{}).EffectiveCompress(config.Defaults{Compress: false}) {
 		t.Fatal("nil override should fall back to default false")
+	}
+}
+
+func TestBuildRsyncArgsBwlimit(t *testing.T) {
+	s := config.Sync{User: "u", Host: "h", RemotePath: "/src"}
+	args := buildRsyncArgs(s, 22, "/local/current", false, false, "", 500)
+	if !strings.Contains(strings.Join(args, " "), "--bwlimit 500") {
+		t.Fatalf("bwlimit not passed through: %v", args)
+	}
+}
+
+func TestEffectiveBwlimit(t *testing.T) {
+	d := config.Defaults{Bwlimit: 100}
+	if got := (config.Sync{}).EffectiveBwlimit(d); got != 100 {
+		t.Fatalf("inherit default: got %d, want 100", got)
+	}
+	if got := (config.Sync{Bwlimit: 250}).EffectiveBwlimit(d); got != 250 {
+		t.Fatalf("entry override: got %d, want 250", got)
 	}
 }
 

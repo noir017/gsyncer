@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,6 +17,42 @@ import (
 	"gsync/internal/retention"
 	"gsync/internal/snapshot"
 )
+
+// progressInterval throttles how often streamed rsync progress lines are
+// forwarded to the log, so a fast --info=progress2 stream cannot flood the
+// UI channel or bloat the run log.
+const progressInterval = 500 * time.Millisecond
+
+// runRsync executes the rsync transfer. When the runner supports streaming
+// (execx.Real) it forwards throttled progress lines to deps.Log so the run
+// screen updates live; otherwise it falls back to a blocking capture, keeping
+// test fakes and other Runner implementations working unchanged. Either way it
+// returns the full captured Result so parseStats still sees the stats block.
+func runRsync(ctx context.Context, deps Deps, name string, args []string) (execx.Result, error) {
+	sr, ok := deps.Runner.(execx.StreamRunner)
+	if !ok {
+		return deps.Runner.Run(ctx, "rsync", args...)
+	}
+	now := deps.Now
+	if now == nil {
+		now = time.Now
+	}
+	var last time.Time
+	var started bool
+	onLine := func(l string) {
+		l = strings.TrimSpace(l)
+		if l == "" {
+			return
+		}
+		t := now()
+		if started && t.Sub(last) < progressInterval {
+			return
+		}
+		started, last = true, t
+		deps.Log.Infof("[%s] %s", name, l)
+	}
+	return sr.RunStream(ctx, onLine, "rsync", args...)
+}
 
 // Logger is the subset of logging the syncer needs.
 type Logger interface {
@@ -65,6 +102,7 @@ type Result struct {
 	Snapshot string
 	Mode     string
 	Pruned   int
+	Duration time.Duration // wall-clock time spent on this entry
 }
 
 // rsyncPartialWarning reports whether an rsync exit code represents a
@@ -85,8 +123,12 @@ func toPolicy(r config.Retention) retention.Policy {
 
 // SyncOne runs the full pipeline for a single entry. It never panics; failures
 // are reported via Result.Err with res.OK == false.
-func SyncOne(ctx context.Context, s config.Sync, d config.Defaults, deps Deps, dryRun bool) Result {
-	res := Result{Name: s.Name}
+func SyncOne(ctx context.Context, s config.Sync, d config.Defaults, deps Deps, dryRun bool) (res Result) {
+	res = Result{Name: s.Name}
+	// Measure wall-clock per entry so notifications and status can report it.
+	// deps.Now is the injected clock; a fixed test clock yields a zero duration.
+	start := deps.Now()
+	defer func() { res.Duration = deps.Now().Sub(start) }()
 	// If the run was already cancelled (e.g. ctrl+c while this entry waited for a
 	// concurrency slot), skip cleanly rather than letting preflight fail against a
 	// dead context and report a spurious FAILED.
@@ -110,6 +152,16 @@ func SyncOne(ctx context.Context, s config.Sync, d config.Defaults, deps Deps, d
 		return res
 	}
 	defer lock.release()
+
+	// Pre-sync hook runs before any rsync work. A failure skips this entry's
+	// rsync entirely so a half-prepared source never produces a torn backup.
+	// Hooks are side-effecting, so a dry-run preview does not run them.
+	if !dryRun {
+		if err := runHook(ctx, deps, s, "pre_sync", s.EffectivePreSync(d), nil); err != nil {
+			res.Err = err
+			return res
+		}
+	}
 
 	if _, err := deps.Runner.Run(ctx, "rsync", "--version"); err != nil {
 		deps.Log.Errorf("[%s] local rsync missing: %s", s.Name, installHint())
@@ -136,7 +188,7 @@ func SyncOne(ctx context.Context, s config.Sync, d config.Defaults, deps Deps, d
 	res.Mode = be.Name()
 	deps.Log.Infof("[%s] snapshot mode: %s", s.Name, be.Name())
 
-	out, err := deps.Runner.Run(ctx, "rsync", buildRsyncArgs(s, port, cur, dryRun, s.EffectiveCompress(d), deps.KnownHostsFile)...)
+	out, err := runRsync(ctx, deps, s.Name, buildRsyncArgs(s, port, cur, dryRun, s.EffectiveCompress(d), deps.KnownHostsFile, s.EffectiveBwlimit(d)))
 	if err != nil {
 		if rsyncPartialWarning(out.Code) {
 			// 23/24 mean the transfer mostly succeeded (some files failed or
@@ -202,6 +254,12 @@ func SyncOne(ctx context.Context, s config.Sync, d config.Defaults, deps Deps, d
 		res.Pruned++
 	}
 	deps.Log.Infof("[%s] pruned %d snapshots", s.Name, res.Pruned)
+
+	// Post-sync hook runs only after a successful snapshot+prune. Its failure is
+	// a warning: the backup already exists, so it does not flip the result.
+	if err := runHook(ctx, deps, s, "post_sync", s.EffectivePostSync(d), postSyncEnv(res)); err != nil {
+		deps.Log.Errorf("[%s] post_sync hook failed (backup already taken): %v", s.Name, err)
+	}
 
 	res.OK = true
 	return res
