@@ -123,6 +123,16 @@ func SyncOne(ctx context.Context, s config.Sync, d config.Defaults, deps Deps, d
 	}
 	defer lock.release()
 
+	// Pre-sync hook runs before any rsync work. A failure skips this entry's
+	// rsync entirely so a half-prepared source never produces a torn backup.
+	// Hooks are side-effecting, so a dry-run preview does not run them.
+	if !dryRun {
+		if err := runHook(ctx, deps, s, "pre_sync", s.EffectivePreSync(d), nil); err != nil {
+			res.Err = err
+			return res
+		}
+	}
+
 	if _, err := deps.Runner.Run(ctx, "rsync", "--version"); err != nil {
 		deps.Log.Errorf("[%s] local rsync missing: %s", s.Name, installHint())
 		res.Err = err
@@ -208,6 +218,12 @@ func SyncOne(ctx context.Context, s config.Sync, d config.Defaults, deps Deps, d
 		res.Pruned++
 	}
 	deps.Log.Infof("[%s] pruned %d snapshots", s.Name, res.Pruned)
+
+	// Post-sync hook runs only after a successful snapshot+prune. Its failure is
+	// a warning: the backup already exists, so it does not flip the result.
+	if err := runHook(ctx, deps, s, "post_sync", s.EffectivePostSync(d), postSyncEnv(res)); err != nil {
+		deps.Log.Errorf("[%s] post_sync hook failed (backup already taken): %v", s.Name, err)
+	}
 
 	res.OK = true
 	return res

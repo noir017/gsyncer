@@ -88,7 +88,9 @@ type NotifyConfig struct {
 // Defaults holds project-wide defaults.
 type Defaults struct {
 	SSHPort   int       `toml:"ssh_port"`
-	Bwlimit   int       `toml:"bwlimit"` // rsync --bwlimit in KB/s; 0 = unlimited
+	Bwlimit   int       `toml:"bwlimit"`   // rsync --bwlimit in KB/s; 0 = unlimited
+	PreSync   string    `toml:"pre_sync"`  // shell command run before each entry's rsync
+	PostSync  string    `toml:"post_sync"` // shell command run after a successful sync
 	Retention Retention `toml:"retention"`
 }
 
@@ -103,7 +105,9 @@ type Sync struct {
 	LocalPath     string             `toml:"local_path"`
 	Ignore        []string           `toml:"ignore"`
 	StrictHostKey bool               `toml:"strict_host_key"`
-	Bwlimit       int                `toml:"bwlimit"` // overrides defaults.bwlimit; 0 = inherit
+	Bwlimit       int                `toml:"bwlimit"`   // overrides defaults.bwlimit; 0 = inherit
+	PreSync       string             `toml:"pre_sync"`  // overrides defaults.pre_sync; "" = inherit
+	PostSync      string             `toml:"post_sync"` // overrides defaults.post_sync; "" = inherit
 	Retention     *RetentionOverride `toml:"retention"`
 }
 
@@ -311,6 +315,22 @@ func (s Sync) EffectiveBwlimit(d Defaults) int {
 		return s.Bwlimit
 	}
 	return d.Bwlimit
+}
+
+// EffectivePreSync resolves the pre-sync hook: entry > defaults ("" = none).
+func (s Sync) EffectivePreSync(d Defaults) string {
+	if s.PreSync != "" {
+		return s.PreSync
+	}
+	return d.PreSync
+}
+
+// EffectivePostSync resolves the post-sync hook: entry > defaults ("" = none).
+func (s Sync) EffectivePostSync(d Defaults) string {
+	if s.PostSync != "" {
+		return s.PostSync
+	}
+	return d.PostSync
 }
 
 // EffectiveRetention merges the entry override over defaults.
