@@ -41,6 +41,10 @@ func (f *streamFake) Run(_ context.Context, name string, args ...string) (execx.
 	return f.handler(name, args)
 }
 
+func (f *streamFake) RunEnv(_ context.Context, _ []string, name string, args ...string) (execx.Result, error) {
+	return f.handler(name, args)
+}
+
 func (f *streamFake) RunStream(_ context.Context, onLine func(string), name string, args ...string) (execx.Result, error) {
 	for _, l := range f.progress {
 		if onLine != nil {
