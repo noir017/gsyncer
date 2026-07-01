@@ -48,7 +48,10 @@ func (b *Btrfs) EnsureCurrent(ctx context.Context, root string) (string, error) 
 	return cur, nil
 }
 
-// Create makes a read-only subvolume snapshot.
+// Create makes a read-only subvolume snapshot. Unlike the hardlink backend this
+// needs no temp+rename dance: `btrfs subvolume snapshot` is a single atomic
+// kernel operation, so a crash leaves either no subvolume or a complete one —
+// never a half-populated directory under the final name.
 func (b *Btrfs) Create(ctx context.Context, root string, ts time.Time) (string, error) {
 	snaps := filepath.Join(root, "snapshots")
 	if err := os.MkdirAll(snaps, 0o755); err != nil {
