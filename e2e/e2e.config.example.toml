@@ -1,0 +1,35 @@
+# Example configuration for the end-to-end tests (see e2e_test.go).
+#
+# Copy this file to e2e.config.toml (in this same e2e/ folder) and fill in your
+# own servers, or point GSYNC_E2E_CONFIG at a file elsewhere. e2e.config.toml is
+# gitignored so real host names and credentials never enter the repository.
+#
+#   cp e2e/e2e.config.example.toml e2e/e2e.config.toml
+#   $EDITOR e2e/e2e.config.toml
+#   go test -tags e2e ./e2e -v
+#
+# Everything here is optional:
+#   - list zero or more [[server]] blocks; the full sync/snapshot/restore/prune
+#     pipeline runs against each. With none, TestE2E skips.
+#   - list zero or more [[no_rsync_server]] blocks (hosts WITHOUT rsync) to check
+#     the failure path exits non-zero. With none, that test skips.
+# Unreachable hosts are skipped individually, so a partial config still runs.
+
+# --- rsync-capable hosts: the happy-path pipeline runs against each ---
+# [[server]]
+#   host        = "backup.example.com"  # host or IP; ssh honors ~/.ssh/config
+#   user        = "deploy"
+#   port        = 22                     # optional, default 22
+#   identity    = "~/.ssh/id_ed25519"    # optional; empty = ssh's own config
+#   remote_base = "/tmp"                 # optional; where the test creates its
+#                                        # throwaway fixture dir (default /tmp)
+
+# [[server]]
+#   host = "another-host"
+#   user = "root"
+
+# --- hosts deliberately WITHOUT rsync: exercise the failure path ---
+# [[no_rsync_server]]
+#   host = "minimal-host.example.com"
+#   user = "admin"
+#   port = 22
