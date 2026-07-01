@@ -11,11 +11,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"gsync/internal/config"
-	"gsync/internal/execx"
-	"gsync/internal/logx"
-	"gsync/internal/snapshot"
-	"gsync/internal/syncer"
+	"gsyncer/internal/config"
+	"gsyncer/internal/execx"
+	"gsyncer/internal/logx"
+	"gsyncer/internal/snapshot"
+	"gsyncer/internal/syncer"
 )
 
 // teeLogger forwards every log call to two loggers (UI channel + file).

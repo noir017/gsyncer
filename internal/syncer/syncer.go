@@ -12,10 +12,10 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"gsync/internal/config"
-	"gsync/internal/execx"
-	"gsync/internal/retention"
-	"gsync/internal/snapshot"
+	"gsyncer/internal/config"
+	"gsyncer/internal/execx"
+	"gsyncer/internal/retention"
+	"gsyncer/internal/snapshot"
 )
 
 // progressInterval throttles how often streamed rsync progress lines are

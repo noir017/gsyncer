@@ -1,4 +1,4 @@
-// Command gsync pulls remote folders over ssh+rsync and keeps GFS snapshots.
+// Command gsyncer pulls remote folders over ssh+rsync and keeps GFS snapshots.
 package main
 
 import (
@@ -12,14 +12,14 @@ import (
 	"syscall"
 	"time"
 
-	"gsync/internal/config"
-	"gsync/internal/execx"
-	"gsync/internal/logx"
-	"gsync/internal/notify"
-	"gsync/internal/restore"
-	"gsync/internal/snapshot"
-	"gsync/internal/syncer"
-	"gsync/internal/tui"
+	"gsyncer/internal/config"
+	"gsyncer/internal/execx"
+	"gsyncer/internal/logx"
+	"gsyncer/internal/notify"
+	"gsyncer/internal/restore"
+	"gsyncer/internal/snapshot"
+	"gsyncer/internal/syncer"
+	"gsyncer/internal/tui"
 )
 
 // signalCtx returns a context cancelled on SIGINT/SIGTERM so a cron run can be
@@ -41,20 +41,20 @@ func exeDir() string {
 
 // usage prints the top-level command reference to w.
 func usage(w io.Writer) {
-	fmt.Fprintf(w, `gsync %s — 通过 ssh+rsync 备份远程文件夹，并保留 GFS 快照
+	fmt.Fprintf(w, `gsyncer %s — 通过 ssh+rsync 备份远程文件夹，并保留 GFS 快照
 
 用法:
-  gsync                       启动交互式 TUI
-  gsync sync [flags]          同步条目 (-name -server -dry-run -config)
-  gsync list [-config path]   列出已配置的条目
-  gsync snapshots -name N     列出某条目的快照 (-config)
-  gsync status [flags]        各条目快照健康度 (-json -stale-hours -config)
-  gsync restore -name N       恢复快照到目录 (-at|-latest -to -force -config)
-  gsync prune [flags]         按保留策略清理快照 (-name -dry-run -config)
-  gsync check [-config path]  只校验配置，不同步
-  gsync init [-config -force] 在默认位置写入一份带注释的示例配置
-  gsync version               打印版本
-  gsync help                  显示本帮助
+  gsyncer                       启动交互式 TUI
+  gsyncer sync [flags]          同步条目 (-name -server -dry-run -config)
+  gsyncer list [-config path]   列出已配置的条目
+  gsyncer snapshots -name N     列出某条目的快照 (-config)
+  gsyncer status [flags]        各条目快照健康度 (-json -stale-hours -config)
+  gsyncer restore -name N       恢复快照到目录 (-at|-latest -to -force -config)
+  gsyncer prune [flags]         按保留策略清理快照 (-name -dry-run -config)
+  gsyncer check [-config path]  只校验配置，不同步
+  gsyncer init [-config -force] 在默认位置写入一份带注释的示例配置
+  gsyncer version               打印版本
+  gsyncer help                  显示本帮助
 
 默认配置路径: %s
 `, version, resolveConfigPath("", exeDir()))
@@ -72,7 +72,7 @@ func main() {
 	}
 	switch os.Args[1] {
 	case "version":
-		fmt.Println("gsync", version)
+		fmt.Println("gsyncer", version)
 	case "help", "-h", "--help":
 		usage(os.Stdout)
 	case "sync":
@@ -112,7 +112,7 @@ func cmdInit(argv []string) int {
 		return 1
 	}
 	// 0600: the config may reference identity key paths; keep it owner-only,
-	// consistent with the tightened perms elsewhere in gsync.
+	// consistent with the tightened perms elsewhere in gsyncer.
 	if err := os.WriteFile(path, []byte(config.StarterTemplate), 0o600); err != nil {
 		fmt.Fprintln(os.Stderr, "init:", err)
 		return 1

@@ -1,6 +1,6 @@
 //go:build e2e
 
-// End-to-end tests that drive the compiled gsync binary through its real
+// End-to-end tests that drive the compiled gsyncer binary through its real
 // ssh+rsync pipeline against live servers. They are excluded from the default
 // `go test ./...` by the `e2e` build tag, since they need network access and
 // SSH credentials the unit suite must not depend on.
@@ -39,20 +39,20 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// gsyncBin is the freshly compiled binary shared by all e2e tests.
-var gsyncBin string
+// gsyncerBin is the freshly compiled binary shared by all e2e tests.
+var gsyncerBin string
 
 func TestMain(m *testing.M) {
-	dir, err := os.MkdirTemp("", "gsync-e2e-bin-")
+	dir, err := os.MkdirTemp("", "gsyncer-e2e-bin-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "e2e: mkdtemp:", err)
 		os.Exit(1)
 	}
-	gsyncBin = filepath.Join(dir, "gsync")
+	gsyncerBin = filepath.Join(dir, "gsyncer")
 	// Build the same static binary users deploy, from the module root (the parent
 	// of this package). Using ".." rather than an import path keeps the tests
 	// working even if the module is renamed on a fork.
-	build := exec.Command("go", "build", "-o", gsyncBin, "..")
+	build := exec.Command("go", "build", "-o", gsyncerBin, "..")
 	build.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if out, err := build.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "e2e: build failed: %v\n%s", err, out)
@@ -126,7 +126,7 @@ func (r remote) label() string {
 }
 
 // sshArgs builds the argument list for an ssh invocation to this host, applying
-// the same batch/timeout/identity options gsync itself uses.
+// the same batch/timeout/identity options gsyncer itself uses.
 func (r remote) sshArgs(command ...string) []string {
 	a := []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-p", r.port}
 	if r.identity != "" {
@@ -137,7 +137,7 @@ func (r remote) sshArgs(command ...string) []string {
 }
 
 // ssh runs a command on the remote, failing the test on error. Fixture
-// setup/teardown goes through this, independent of gsync.
+// setup/teardown goes through this, independent of gsyncer.
 func (r remote) ssh(t *testing.T, command string) string {
 	t.Helper()
 	out, err := exec.Command("ssh", r.sshArgs(command)...).CombinedOutput()
@@ -153,18 +153,18 @@ func (r remote) reachable() bool {
 	return exec.Command("ssh", r.sshArgs("true")...).Run() == nil
 }
 
-// runResult is one invocation of the gsync binary.
+// runResult is one invocation of the gsyncer binary.
 type runResult struct {
 	stdout, stderr string
 	code           int
 }
 
-// gsync runs the compiled binary with args, using workDir as its directory (so
+// gsyncer runs the compiled binary with args, using workDir as its directory (so
 // logs land under workDir/logs, isolated per test). It never fails the test —
 // callers assert on code/stdout so both success and failure paths are testable.
-func gsync(t *testing.T, workDir string, args ...string) runResult {
+func gsyncer(t *testing.T, workDir string, args ...string) runResult {
 	t.Helper()
-	cmd := exec.Command(gsyncBin, args...)
+	cmd := exec.Command(gsyncerBin, args...)
 	cmd.Dir = workDir
 	var so, se strings.Builder
 	cmd.Stdout = &so
@@ -175,13 +175,13 @@ func gsync(t *testing.T, workDir string, args ...string) runResult {
 		if errors.As(err, &ee) {
 			code = ee.ExitCode()
 		} else {
-			t.Fatalf("gsync %v: %v", args, err)
+			t.Fatalf("gsyncer %v: %v", args, err)
 		}
 	}
 	return runResult{stdout: so.String(), stderr: se.String(), code: code}
 }
 
-// writeConfig writes a single-entry gsync config for the given remote and
+// writeConfig writes a single-entry gsyncer config for the given remote and
 // returns its path. recent controls the retention keep-count; the other GFS
 // layers are 0 so pruning is fully determined by recent.
 func writeConfig(t *testing.T, dir string, r remote, remotePath, localPath string, recent int) string {
@@ -234,7 +234,7 @@ func snapNames(t *testing.T, localPath string) []string {
 	return names
 }
 
-// entryStatus mirrors the JSON emitted by `gsync status --json`. Declared here
+// entryStatus mirrors the JSON emitted by `gsyncer status --json`. Declared here
 // (rather than importing the binary's type) to keep these tests black-box.
 type entryStatus struct {
 	Name     string  `json:"name"`
@@ -266,11 +266,11 @@ func TestE2E(t *testing.T) {
 	}
 }
 
-// runPipeline provisions a remote fixture and exercises the whole gsync
+// runPipeline provisions a remote fixture and exercises the whole gsyncer
 // lifecycle against one host, asserting on-disk results at each step.
 func runPipeline(t *testing.T, r remote) {
 	// Unique remote fixture, torn down at the end.
-	remotePath := fmt.Sprintf("%s/gsync-e2e-%d", strings.TrimRight(r.remoteBase, "/"), os.Getpid())
+	remotePath := fmt.Sprintf("%s/gsyncer-e2e-%d", strings.TrimRight(r.remoteBase, "/"), os.Getpid())
 	r.ssh(t, fmt.Sprintf(
 		"rm -rf %[1]s && mkdir -p %[1]s/sub %[1]s/node_modules && "+
 			"printf 'hello\\n' > %[1]s/a.txt && printf 'world\\n' > %[1]s/sub/b.txt && "+
@@ -282,7 +282,7 @@ func runPipeline(t *testing.T, r remote) {
 	cfgArg := []string{"--config", writeConfig(t, work, r, remotePath, localPath, 10)}
 
 	t.Run("check", func(t *testing.T) {
-		res := gsync(t, work, append([]string{"check"}, cfgArg...)...)
+		res := gsyncer(t, work, append([]string{"check"}, cfgArg...)...)
 		if res.code != 0 {
 			t.Fatalf("check code=%d stderr=%s", res.code, res.stderr)
 		}
@@ -292,7 +292,7 @@ func runPipeline(t *testing.T, r remote) {
 	})
 
 	t.Run("list", func(t *testing.T) {
-		res := gsync(t, work, append([]string{"list"}, cfgArg...)...)
+		res := gsyncer(t, work, append([]string{"list"}, cfgArg...)...)
 		if res.code != 0 || !strings.Contains(res.stdout, "web") ||
 			!strings.Contains(res.stdout, r.host) {
 			t.Fatalf("list code=%d stdout=%q", res.code, res.stdout)
@@ -300,7 +300,7 @@ func runPipeline(t *testing.T, r remote) {
 	})
 
 	t.Run("sync_and_ignore", func(t *testing.T) {
-		res := gsync(t, work, append([]string{"sync"}, cfgArg...)...)
+		res := gsyncer(t, work, append([]string{"sync"}, cfgArg...)...)
 		if res.code != 0 {
 			t.Fatalf("sync code=%d stdout=%q stderr=%q", res.code, res.stdout, res.stderr)
 		}
@@ -321,7 +321,7 @@ func runPipeline(t *testing.T, r remote) {
 
 	t.Run("dry_run_makes_no_snapshot", func(t *testing.T) {
 		before := len(snapNames(t, localPath))
-		res := gsync(t, work, append([]string{"sync", "--dry-run"}, cfgArg...)...)
+		res := gsyncer(t, work, append([]string{"sync", "--dry-run"}, cfgArg...)...)
 		if res.code != 0 {
 			t.Fatalf("dry-run code=%d stderr=%q", res.code, res.stderr)
 		}
@@ -333,7 +333,7 @@ func runPipeline(t *testing.T, r remote) {
 	t.Run("incremental_and_hardlink_dedup", func(t *testing.T) {
 		// Mutate a.txt, add c.txt; b.txt stays byte-identical.
 		r.ssh(t, fmt.Sprintf("printf 'hello\\nchanged\\n' > %[1]s/a.txt && printf 'new\\n' > %[1]s/c.txt", remotePath))
-		res := gsync(t, work, append([]string{"sync"}, cfgArg...)...)
+		res := gsyncer(t, work, append([]string{"sync"}, cfgArg...)...)
 		if res.code != 0 {
 			t.Fatalf("second sync code=%d stderr=%q", res.code, res.stderr)
 		}
@@ -357,7 +357,7 @@ func runPipeline(t *testing.T, r remote) {
 	})
 
 	t.Run("snapshots_lists_all", func(t *testing.T) {
-		res := gsync(t, work, append([]string{"snapshots", "--name", "web"}, cfgArg...)...)
+		res := gsyncer(t, work, append([]string{"snapshots", "--name", "web"}, cfgArg...)...)
 		lines := nonEmptyLines(res.stdout)
 		if res.code != 0 || len(lines) != 2 {
 			t.Fatalf("snapshots code=%d lines=%v", res.code, lines)
@@ -365,7 +365,7 @@ func runPipeline(t *testing.T, r remote) {
 	})
 
 	t.Run("status_json", func(t *testing.T) {
-		res := gsync(t, work, append([]string{"status", "--json"}, cfgArg...)...)
+		res := gsyncer(t, work, append([]string{"status", "--json"}, cfgArg...)...)
 		if res.code != 0 {
 			t.Fatalf("status code=%d stderr=%q", res.code, res.stderr)
 		}
@@ -393,7 +393,7 @@ func runPipeline(t *testing.T, r remote) {
 
 	t.Run("restore_latest", func(t *testing.T) {
 		dst := filepath.Join(work, "restored")
-		res := gsync(t, work, append([]string{"restore", "--name", "web", "--latest", "--to", dst}, cfgArg...)...)
+		res := gsyncer(t, work, append([]string{"restore", "--name", "web", "--latest", "--to", dst}, cfgArg...)...)
 		if res.code != 0 {
 			t.Fatalf("restore code=%d stderr=%q", res.code, res.stderr)
 		}
@@ -416,7 +416,7 @@ func runPipeline(t *testing.T, r remote) {
 			t.Fatal(err)
 		}
 		tightCfg := writeConfig(t, tightDir, r, remotePath, localPath, 1)
-		res := gsync(t, work, "prune", "--name", "web", "--config", tightCfg)
+		res := gsyncer(t, work, "prune", "--name", "web", "--config", tightCfg)
 		if res.code != 0 {
 			t.Fatalf("prune code=%d stderr=%q", res.code, res.stderr)
 		}
@@ -453,7 +453,7 @@ func TestE2ERemoteRsyncMissing(t *testing.T) {
 			}
 			cfgPath := writeConfig(t, work, r, r.remoteBase, localPath, 3)
 
-			res := gsync(t, work, "sync", "--config", cfgPath)
+			res := gsyncer(t, work, "sync", "--config", cfgPath)
 			if res.code == 0 {
 				t.Fatalf("sync against rsync-less host should fail, got exit 0\nstdout=%q", res.stdout)
 			}

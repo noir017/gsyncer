@@ -8,10 +8,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"gsync/internal/config"
-	"gsync/internal/execx"
-	"gsync/internal/snapshot"
-	"gsync/internal/syncer"
+	"gsyncer/internal/config"
+	"gsyncer/internal/execx"
+	"gsyncer/internal/snapshot"
+	"gsyncer/internal/syncer"
 )
 
 type runStatus int
@@ -201,7 +201,7 @@ func truncateWidth(s string, w int) string {
 
 func (m listModel) View() string {
 	var b strings.Builder
-	b.WriteString(styleTitle.Render("gsync — 文件同步") + "\n\n")
+	b.WriteString(styleTitle.Render("gsyncer — 文件同步") + "\n\n")
 	if len(m.cfg.Sync) == 0 {
 		b.WriteString(styleHelp.Render("（无条目）按 a 新增第一个条目\n"))
 		return b.String()

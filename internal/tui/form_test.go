@@ -7,7 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"gsync/internal/config"
+	"gsyncer/internal/config"
 )
 
 func TestFormAppliesSize(t *testing.T) {

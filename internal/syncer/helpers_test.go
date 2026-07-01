@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"gsync/internal/config"
+	"gsyncer/internal/config"
 )
 
 func TestParseStats(t *testing.T) {
@@ -58,7 +58,7 @@ func TestBuildRsyncArgs(t *testing.T) {
 	if !contains(args, "--numeric-ids") {
 		t.Fatalf("missing --numeric-ids: %v", args)
 	}
-	if !contains(args, "--partial") || !contains(args, "--partial-dir=.gsync-partial") {
+	if !contains(args, "--partial") || !contains(args, "--partial-dir=.gsyncer-partial") {
 		t.Fatalf("missing --partial / --partial-dir: %v", args)
 	}
 	if !strings.Contains(j, "UserKnownHostsFile=/cfg/known_hosts") {
@@ -66,10 +66,10 @@ func TestBuildRsyncArgs(t *testing.T) {
 	}
 	// The partial-dir exclude must precede the user's own filters (rsync is
 	// first-match-wins) so nothing can pull the staging dir into the mirror.
-	if !strings.Contains(j, "--filter - /.gsync-partial/") {
+	if !strings.Contains(j, "--filter - /.gsyncer-partial/") {
 		t.Fatalf("missing partial-dir exclude filter: %v", args)
 	}
-	if strings.Index(j, "--filter - /.gsync-partial/") > strings.Index(j, "--filter - *.log") {
+	if strings.Index(j, "--filter - /.gsyncer-partial/") > strings.Index(j, "--filter - *.log") {
 		t.Fatalf("partial-dir exclude must come before user filters: %v", args)
 	}
 	if !strings.Contains(j, "--filter - *.log") {

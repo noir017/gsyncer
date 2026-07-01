@@ -12,14 +12,14 @@ import (
 // that then gets snapshotted.
 type fileLock struct{ f *os.File }
 
-// acquireLock takes a non-blocking exclusive flock on <root>/.gsync.lock.
+// acquireLock takes a non-blocking exclusive flock on <root>/.gsyncer.lock.
 // It returns (lock, true, nil) when the lock is held, (nil, false, nil) when
 // another process already holds it, or (nil, false, err) on an unexpected error.
 func acquireLock(root string) (*fileLock, bool, error) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, false, err
 	}
-	f, err := os.OpenFile(filepath.Join(root, ".gsync.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	f, err := os.OpenFile(filepath.Join(root, ".gsyncer.lock"), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, false, err
 	}

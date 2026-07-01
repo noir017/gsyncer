@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"gsync/internal/execx"
+	"gsyncer/internal/execx"
 )
 
 func mkTimes() []time.Time {

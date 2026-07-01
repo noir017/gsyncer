@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"gsync/internal/config"
-	"gsync/internal/syncer"
+	"gsyncer/internal/config"
+	"gsyncer/internal/syncer"
 )
 
 func TestCmdInitWritesLoadableConfig(t *testing.T) {
@@ -17,7 +17,7 @@ func TestCmdInitWritesLoadableConfig(t *testing.T) {
 	if code := cmdInit([]string{"-config", path}); code != 0 {
 		t.Fatalf("init exit = %d, want 0", code)
 	}
-	// The starter config must load and validate cleanly so `gsync list` works.
+	// The starter config must load and validate cleanly so `gsyncer list` works.
 	if _, err := config.Load(path); err != nil {
 		t.Fatalf("starter config does not load: %v", err)
 	}

@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"gsync/internal/execx"
+	"gsyncer/internal/execx"
 )
 
 // ErrCurrentNotSubvolume means root/current exists but is not a btrfs subvolume,

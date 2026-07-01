@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# 编译 gsync 为无外部依赖的 Linux 静态单文件可执行程序。
+# 编译 gsyncer 为无外部依赖的 Linux 静态单文件可执行程序。
 #   - CGO_ENABLED=0  : 禁用 cgo，使用纯 Go 的 net/os/user 实现，不链接 libc
 #   - -ldflags "-s -w" : 去掉符号表和调试信息，减小体积
 #   - -trimpath      : 去掉编译机的绝对路径，构建可复现
-# 用法: ./build.sh [输出路径]   (默认 dist/gsync)
+# 用法: ./build.sh [输出路径]   (默认 dist/gsyncer)
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
-OUT="${1:-dist/gsync}"
+OUT="${1:-dist/gsyncer}"
 GOARCH="${GOARCH:-amd64}"   # 可用环境变量覆盖，如 GOARCH=arm64 ./build.sh
 
 mkdir -p "$(dirname "$OUT")"

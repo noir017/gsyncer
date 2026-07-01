@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"gsync/internal/execx"
+	"gsyncer/internal/execx"
 )
 
 // TSLayout is the timestamp format used for snapshot directory names.

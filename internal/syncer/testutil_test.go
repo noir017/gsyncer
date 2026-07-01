@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"gsync/internal/execx"
+	"gsyncer/internal/execx"
 )
 
 func fmtSprintfImpl(f string, a []any) string { return fmt.Sprintf(f, a...) }

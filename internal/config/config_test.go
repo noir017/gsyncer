@@ -17,7 +17,7 @@ func TestLoadMissingFileFriendlyError(t *testing.T) {
 	if !strings.Contains(msg, "not found") || !strings.Contains(msg, path) {
 		t.Fatalf("error should name the path and be friendly, got %q", msg)
 	}
-	if !strings.Contains(msg, "gsync init") {
+	if !strings.Contains(msg, "gsyncer init") {
 		t.Fatalf("error should suggest the remedy, got %q", msg)
 	}
 }
