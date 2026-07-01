@@ -49,6 +49,21 @@ type runEntriesMsg struct {
 	dryRun  bool
 }
 
+// snapSizesMsg carries the nominal sizes computed off the UI goroutine for the
+// snapshot browser, keyed by timestamp string. epoch guards a stale computation
+// from overwriting rows after the list changed (a delete/prune bumps the epoch).
+type snapSizesMsg struct {
+	epoch int
+	sizes map[string]string
+}
+
+// snapOpDoneMsg reports that a background snapshot op (restore/prune/delete)
+// finished. status is the line to show; reload asks the browser to re-list.
+type snapOpDoneMsg struct {
+	status string
+	reload bool
+}
+
 // backToListMsg returns to the main menu.
 type backToListMsg struct{}
 

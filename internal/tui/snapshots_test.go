@@ -52,13 +52,52 @@ func TestSnapsReloadDescending(t *testing.T) {
 	}
 }
 
+// Sizes are computed off the UI goroutine: the list opens with "…" placeholders
+// and fills in only when the size command's message is delivered.
+func TestSnapsSizesLoadAsync(t *testing.T) {
+	e := makeSnaps(t, "2026-06-24_030000") // one 10-byte file
+	m := newSnaps(e, config.Defaults{}, &execx.FakeRunner{}, nonBtrfsFS)
+
+	// Before the size command runs, the row shows the pending placeholder.
+	if got := m.tbl.Rows()[0][1]; got != "…" {
+		t.Fatalf("size cell before compute = %q, want the pending placeholder", got)
+	}
+
+	cmd := m.Init() // background size computation
+	if cmd == nil {
+		t.Fatal("Init should return a size-computation command")
+	}
+	m, _ = m.Update(cmd())
+
+	if got := m.tbl.Rows()[0][1]; got == "…" || got == "" {
+		t.Fatalf("size cell after compute = %q, want a real size", got)
+	}
+}
+
+// A size result from a superseded computation (older epoch) must be ignored so
+// it can't overwrite the rows after the list changed.
+func TestSnapsStaleSizesIgnored(t *testing.T) {
+	e := makeSnaps(t, "2026-06-24_030000")
+	m := newSnaps(e, config.Defaults{}, &execx.FakeRunner{}, nonBtrfsFS)
+	m.epoch = 5
+	m, _ = m.Update(snapSizesMsg{epoch: 4, sizes: map[string]string{"2026-06-24_030000": "999 B"}})
+	if got := m.tbl.Rows()[0][1]; got == "999 B" {
+		t.Fatal("stale (older-epoch) size result must be ignored")
+	}
+}
+
 func TestSnapsDeleteRemovesDir(t *testing.T) {
 	e := makeSnaps(t, "2026-06-24_030000")
 	m := newSnaps(e, config.Defaults{}, &execx.FakeRunner{}, nonBtrfsFS)
 	p := m.snapPath(0)
-	// 'd' then confirm 'y'
+	// 'd' then confirm 'y' — deletion now runs off the UI goroutine as a Cmd, so
+	// execute the returned Cmd and feed its done-msg back before asserting.
 	m, _ = m.Update(keyMsg("d"))
-	m, _ = m.Update(keyMsg("y"))
+	m, cmd := m.Update(keyMsg("y"))
+	if cmd == nil {
+		t.Fatal("confirming delete should return a background delete command")
+	}
+	m, _ = m.Update(cmd()) // runs the delete, then reloads the list
 	if _, err := os.Stat(p); !os.IsNotExist(err) {
 		t.Fatalf("snapshot dir should be deleted: %v", err)
 	}
@@ -88,8 +127,13 @@ func TestSnapsRestoreDefaultPathNotCurrent(t *testing.T) {
 		t.Fatal("should be in restoring mode after x")
 	}
 
-	// press enter to accept the default path
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	// press enter to accept the default path; the restore runs off the UI
+	// goroutine, so execute the returned Cmd to perform the cp.
+	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("accepting the restore path should return a background restore command")
+	}
+	cmd()
 
 	// find the cp call
 	var cpCall *execx.Call
@@ -186,12 +230,16 @@ func TestSnapsRestoreConfirmsExistingDest(t *testing.T) {
 		}
 	}
 
-	// press y to confirm — should issue cp
-	m, _ = m.Update(keyMsg("y"))
+	// press y to confirm — should issue cp (off the UI goroutine)
+	m, cmd := m.Update(keyMsg("y"))
 
 	if m.confirmOverwrite {
 		t.Fatal("expected confirmOverwrite == false after y")
 	}
+	if cmd == nil {
+		t.Fatal("confirming overwrite should return a background restore command")
+	}
+	cmd()
 	var cpCall *execx.Call
 	for i := range fr.Calls {
 		if fr.Calls[i].Name == "cp" {
@@ -262,12 +310,16 @@ func TestSnapsRestoreNewDestNoConfirm(t *testing.T) {
 	}
 	m.restoreInput.SetValue(newDst)
 
-	// press enter — should issue cp directly without confirm
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	// press enter — should issue cp directly (off the UI goroutine) without confirm
+	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
 	if m.confirmOverwrite {
 		t.Fatal("confirmOverwrite should not be set for non-existing destination")
 	}
+	if cmd == nil {
+		t.Fatal("restore to a new destination should return a background restore command")
+	}
+	cmd()
 	var cpCall *execx.Call
 	for i := range fr.Calls {
 		if fr.Calls[i].Name == "cp" {
