@@ -27,15 +27,26 @@ func (h *Hardlink) EnsureCurrent(_ context.Context, root string) (string, error)
 	return cur, os.MkdirAll(cur, 0o755)
 }
 
-// Create hardlink-copies root/current into root/snapshots/<ts>.
+// Create hardlink-copies root/current into root/snapshots/<ts>. The copy is
+// built into a ".partial" sibling and atomically renamed into place, so an
+// interrupted run never leaves a truncated tree under a name that List/retention
+// would mistake for a complete snapshot (the ".partial" suffix is not parseable
+// as a timestamp, so List skips any orphan left behind by a crash).
 func (h *Hardlink) Create(ctx context.Context, root string, ts time.Time) (string, error) {
 	snaps := filepath.Join(root, "snapshots")
 	if err := os.MkdirAll(snaps, 0o755); err != nil {
 		return "", err
 	}
 	dst := nextFreeSnapshotPath(snaps, ts)
+	tmp := dst + ".partial"
+	_ = os.RemoveAll(tmp) // clear any leftover from a previous crash
 	cur := filepath.Join(root, "current")
-	if _, err := h.r.Run(ctx, "cp", "-al", cur, dst); err != nil {
+	if _, err := h.r.Run(ctx, "cp", "-al", cur, tmp); err != nil {
+		_ = os.RemoveAll(tmp)
+		return "", err
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		_ = os.RemoveAll(tmp)
 		return "", err
 	}
 	return dst, nil
