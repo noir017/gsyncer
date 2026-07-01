@@ -174,17 +174,15 @@ func cmdSync(argv []string) int {
 	_ = logx.Cleanup(logDir, cfg.Log.KeepDays, cfg.Log.KeepCount, time.Now())
 	fmt.Println(line)
 
-	// Notify after the run. Use a fresh, bounded context so a notification still
-	// goes out even when the run's own context was cancelled (ctrl+c / timeout) —
-	// a cancelled run is exactly when a failure alert matters most.
+	// Notify after the run. Use a fresh background context (not the run's, which
+	// may be cancelled by ctrl+c — a cancelled run is exactly when a failure
+	// alert matters most); Send bounds each sink with its own timeout.
 	payload := notify.Build(results, entries, time.Since(start))
 	if notify.ShouldSend(cfg.Notify, payload) {
-		nctx, ncancel := context.WithTimeout(context.Background(), 15*time.Second)
-		if err := notify.Send(nctx, cfg.Notify, payload, nil, execx.Real{}); err != nil {
+		if err := notify.Send(context.Background(), cfg.Notify, payload, nil, execx.Real{}); err != nil {
 			fmt.Fprintln(os.Stderr, "notify:", err)
 			rl.Errorf("notify: %v", err)
 		}
-		ncancel()
 	}
 
 	for _, r := range results {

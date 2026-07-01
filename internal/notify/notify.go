@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -90,11 +91,15 @@ func ShouldSend(cfg config.NotifyConfig, p Payload) bool {
 	return cfg.OnSuccess
 }
 
+// sinkTimeout bounds each notification sink independently.
+const sinkTimeout = 10 * time.Second
+
 // Send delivers the notification to whichever sinks are configured, when the
-// switches call for it. It returns the first sink error but always attempts
-// every configured sink; a nil client defaults to a 10s-timeout HTTP client.
-// Notification failures are non-fatal to the caller — they should be logged,
-// not allowed to change the run's exit code.
+// switches call for it. Each sink gets its OWN timeout derived from ctx, so a
+// slow webhook cannot starve the command sink (they are redundant channels).
+// It attempts every configured sink and joins their errors; a nil client
+// defaults to a 10s-timeout HTTP client. Notification failures are non-fatal to
+// the caller — they should be logged, not allowed to change the run's exit code.
 func Send(ctx context.Context, cfg config.NotifyConfig, p Payload, client *http.Client, runner execx.Runner) error {
 	if !ShouldSend(cfg, p) {
 		return nil
@@ -103,18 +108,22 @@ func Send(ctx context.Context, cfg config.NotifyConfig, p Payload, client *http.
 	if err != nil {
 		return err
 	}
-	var firstErr error
+	var errs []error
 	if cfg.Webhook != "" {
-		if err := postWebhook(ctx, cfg.Webhook, body, client); err != nil && firstErr == nil {
-			firstErr = fmt.Errorf("webhook: %w", err)
+		wctx, cancel := context.WithTimeout(ctx, sinkTimeout)
+		if err := postWebhook(wctx, cfg.Webhook, body, client); err != nil {
+			errs = append(errs, fmt.Errorf("webhook: %w", err))
 		}
+		cancel()
 	}
 	if cfg.Command != "" {
-		if err := runCommand(ctx, cfg.Command, p, body, runner); err != nil && firstErr == nil {
-			firstErr = fmt.Errorf("command: %w", err)
+		cctx, cancel := context.WithTimeout(ctx, sinkTimeout)
+		if err := runCommand(cctx, cfg.Command, p, body, runner); err != nil {
+			errs = append(errs, fmt.Errorf("command: %w", err))
 		}
+		cancel()
 	}
-	return firstErr
+	return errors.Join(errs...)
 }
 
 func postWebhook(ctx context.Context, url string, body []byte, client *http.Client) error {

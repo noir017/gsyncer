@@ -135,6 +135,24 @@ func TestSendCommandRunsWithEnv(t *testing.T) {
 	}
 }
 
+// A failing webhook must not prevent the command sink from running, and both
+// errors should be reported (redundant channels are independent).
+func TestSendAttemptsBothSinksIndependently(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError) // webhook fails
+	}))
+	defer srv.Close()
+	fr := &execx.FakeRunner{}
+	cfg := config.NotifyConfig{OnFailure: true, Webhook: srv.URL, Command: "mail admin"}
+	err := Send(context.Background(), cfg, Payload{Status: "failure", Failed: 1}, srv.Client(), fr)
+	if err == nil || !strings.Contains(err.Error(), "webhook") {
+		t.Fatalf("expected webhook error reported, got %v", err)
+	}
+	if len(fr.Calls) != 1 || fr.Calls[0].Name != "sh" {
+		t.Fatalf("command sink must still run despite webhook failure: %+v", fr.Calls)
+	}
+}
+
 func TestSendSkipsWhenGatedOff(t *testing.T) {
 	fr := &execx.FakeRunner{}
 	p := Payload{Status: "success"}
