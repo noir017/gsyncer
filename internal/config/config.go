@@ -138,9 +138,31 @@ func checkRetention(ctx string, r Retention) error {
 	return nil
 }
 
-// Validate checks required fields, name uniqueness, and identity existence.
-// Non-fatal issues (e.g. an over-permissive identity key) are collected into
-// c.Warnings rather than returned as errors.
+// IdentityIssue returns a non-fatal description of a problem with the entry's
+// identity file, or "" if the identity is empty or fine. An inaccessible key is
+// an environment concern (e.g. editing a deploy config on another machine), not
+// a structural config error, so callers treat this as a warning — see Validate.
+func (s Sync) IdentityIssue() string {
+	if s.Identity == "" {
+		return ""
+	}
+	path := ExpandHome(s.Identity)
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Sprintf("identity %s not accessible: %v", path, err)
+	}
+	// A private key readable by group/other is a security hole; ssh may also
+	// refuse to use it. Surface it rather than let a cron run fail opaquely.
+	if perm := info.Mode().Perm(); perm&0o077 != 0 {
+		return fmt.Sprintf("identity %s has group/other permissions (%#o); tighten to 0600", path, perm)
+	}
+	return ""
+}
+
+// Validate checks required fields, name uniqueness, and path sanity. Non-fatal
+// issues (an inaccessible or over-permissive identity key) are collected into
+// c.Warnings rather than returned as errors, so one entry with a missing key on
+// the current machine never blocks loading the whole config.
 func (c *Config) Validate() error {
 	c.Warnings = nil
 	seen := map[string]bool{}
@@ -178,19 +200,8 @@ func (c *Config) Validate() error {
 		if filepath.Clean(s.LocalPath) == "/" {
 			return fmt.Errorf("sync %q: local_path must not be the filesystem root", s.Name)
 		}
-		if s.Identity != "" {
-			info, err := os.Stat(ExpandHome(s.Identity))
-			if err != nil {
-				return fmt.Errorf("sync %q: identity not accessible: %w", s.Name, err)
-			}
-			// A private key readable by group/other is a security hole; ssh may
-			// also refuse to use it. Warn at load time rather than let a cron run
-			// fail opaquely later.
-			if perm := info.Mode().Perm(); perm&0o077 != 0 {
-				c.Warnings = append(c.Warnings, fmt.Sprintf(
-					"sync %q: identity %s has group/other permissions (%#o); tighten to 0600",
-					s.Name, ExpandHome(s.Identity), perm))
-			}
+		if msg := s.IdentityIssue(); msg != "" {
+			c.Warnings = append(c.Warnings, fmt.Sprintf("sync %q: %s", s.Name, msg))
 		}
 	}
 	if err := checkRetention("defaults", c.Defaults.Retention); err != nil {

@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"path/filepath"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -154,6 +156,24 @@ func TestListCtrlCEmitsQuit(t *testing.T) {
 	}
 	if _, ok := cmd().(quitMsg); !ok {
 		t.Fatalf("ctrl+c: expected quitMsg, got %T", cmd())
+	}
+}
+
+func TestListFlagsInaccessibleIdentity(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "no-such-key")
+	cfg := &config.Config{Sync: []config.Sync{
+		{Name: "a", Host: "h", User: "u", Identity: missing, RemotePath: "/r", LocalPath: t.TempDir()},
+		{Name: "b", Host: "h", User: "u", RemotePath: "/r", LocalPath: t.TempDir()},
+	}}
+	m := newList(cfg, &execx.FakeRunner{}, nonBtrfsFS)
+	if _, bad := m.warn["a"]; !bad {
+		t.Fatalf("entry a with missing identity should be flagged, warn=%v", m.warn)
+	}
+	if _, bad := m.warn["b"]; bad {
+		t.Fatalf("entry b has no identity and must not be flagged, warn=%v", m.warn)
+	}
+	if v := m.View(); !strings.Contains(v, "not accessible") || !strings.Contains(v, "⚠") {
+		t.Fatalf("View must surface the identity warning, got:\n%s", v)
 	}
 }
 
