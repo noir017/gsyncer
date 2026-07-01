@@ -42,6 +42,7 @@ const defaultJobs = 2
 type Defaults struct {
 	SSHPort   int       `toml:"ssh_port"`
 	Jobs      int       `toml:"jobs"`
+	Compress  bool      `toml:"compress"`
 	Retention Retention `toml:"retention"`
 }
 
@@ -65,6 +66,7 @@ type Sync struct {
 	LocalPath     string             `toml:"local_path"`
 	Ignore        []string           `toml:"ignore"`
 	StrictHostKey bool               `toml:"strict_host_key"`
+	Compress      *bool              `toml:"compress"`
 	Retention     *RetentionOverride `toml:"retention"`
 }
 
@@ -240,6 +242,16 @@ func (s Sync) EffectivePort(d Defaults) int {
 		return d.SSHPort
 	}
 	return 22
+}
+
+// EffectiveCompress resolves rsync compression (-z): the entry override wins,
+// otherwise the project default (off). Compression trades CPU for bandwidth, so
+// it is off by default (many backup datasets are already compressed).
+func (s Sync) EffectiveCompress(d Defaults) bool {
+	if s.Compress != nil {
+		return *s.Compress
+	}
+	return d.Compress
 }
 
 // EffectiveRetention merges the entry override over defaults.

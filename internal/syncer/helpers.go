@@ -109,15 +109,34 @@ func ensureTrailingSlash(p string) string {
 	return p + "/"
 }
 
+// partialDir is the in-transfer staging directory (under current/) that rsync
+// --partial-dir uses. Keeping half-written files here instead of the current/
+// root means an interrupted large file never pollutes current/ or a snapshot.
+const partialDir = ".gsync-partial"
+
 // buildRsyncArgs assembles the full rsync argument list for one entry. The -s
 // (--protect-args) flag stops the remote shell from a second round of
 // word-splitting/globbing on the remote path, so spaces or shell metacharacters
 // in remote_path are transferred literally instead of being re-interpreted.
-func buildRsyncArgs(s config.Sync, port int, currentPath string, dryRun bool, knownHosts string) []string {
-	args := []string{"-a", "-s", "--delete", "--info=stats2", "--timeout", strconv.Itoa(rsyncIOTimeout)}
+//
+// --partial + --partial-dir let an interrupted transfer resume instead of
+// restarting from scratch (pairs with the 300s I/O timeout), while confining the
+// in-flight temp files to partialDir; an explicit exclude keeps that dir out of
+// the mirror. --numeric-ids preserves uid/gid verbatim (a faithful backup, and
+// no remote name lookups). -z (compress) is opt-in per entry / default.
+func buildRsyncArgs(s config.Sync, port int, currentPath string, dryRun, compress bool, knownHosts string) []string {
+	args := []string{"-a", "-s", "--delete", "--numeric-ids",
+		"--partial", "--partial-dir=" + partialDir,
+		"--info=stats2", "--timeout", strconv.Itoa(rsyncIOTimeout)}
+	if compress {
+		args = append(args, "-z")
+	}
 	if dryRun {
 		args = append(args, "-n")
 	}
+	// Exclude the partial-dir first (rsync is first-match-wins) so no user rule
+	// can pull the in-transfer staging dir into the mirror.
+	args = append(args, "--filter", "- /"+partialDir+"/")
 	for _, f := range ignore.ToRsyncFilters(s.Ignore) {
 		args = append(args, "--filter", f)
 	}
