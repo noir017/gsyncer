@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,44 @@ import (
 	"gsync/internal/execx"
 	"gsync/internal/syncer"
 )
+
+// fillRun resizes to a small viewport and pushes enough lines to overflow it.
+func fillRun(t *testing.T) runModel {
+	t.Helper()
+	m := newTestRun()
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 40, Height: 10})
+	for i := 0; i < 50; i++ {
+		m.ch = make(chan tea.Msg, 1)
+		m, _ = m.Update(logLineMsg{level: "INFO", text: fmt.Sprintf("line %d", i)})
+	}
+	return m
+}
+
+func TestRunPreservesScrollWhenNotAtBottom(t *testing.T) {
+	m := fillRun(t)
+	m.vp.GotoTop()
+	if m.vp.AtBottom() {
+		t.Fatal("precondition: viewport must be scrollable and not at bottom")
+	}
+	off := m.vp.YOffset
+	m.ch = make(chan tea.Msg, 1)
+	m, _ = m.Update(logLineMsg{level: "INFO", text: "arrived while scrolled up"})
+	if m.vp.YOffset != off {
+		t.Fatalf("scroll position moved: YOffset %d -> %d", off, m.vp.YOffset)
+	}
+}
+
+func TestRunFollowsTailWhenAtBottom(t *testing.T) {
+	m := fillRun(t)
+	if !m.vp.AtBottom() {
+		t.Fatal("precondition: should be following at bottom after filling")
+	}
+	m.ch = make(chan tea.Msg, 1)
+	m, _ = m.Update(logLineMsg{level: "INFO", text: "another"})
+	if !m.vp.AtBottom() {
+		t.Fatal("must stay pinned to bottom while following")
+	}
+}
 
 func newTestRun() runModel {
 	return newRun(&config.Config{}, "", "", &execx.FakeRunner{}, nonBtrfsFS, time.Now)
@@ -129,6 +168,41 @@ func TestSummarize(t *testing.T) {
 	got := summarize([]syncer.Result{{OK: true}, {OK: false}}, 3400*time.Millisecond)
 	if got != "成功 1 / 失败 1 / 耗时 3.4s" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestRunTickReArmsWhileRunningStopsWhenDone(t *testing.T) {
+	m := newTestRun()
+	m.running = true
+	// while running, a tick advances the spinner and re-arms itself
+	before := m.spinner
+	m, cmd := m.Update(tickMsg{})
+	if cmd == nil {
+		t.Fatal("tick must re-arm while running")
+	}
+	if m.spinner != before+1 {
+		t.Fatalf("spinner = %d, want %d", m.spinner, before+1)
+	}
+	// once not running, a stray tick is a no-op and does NOT re-arm
+	m.running = false
+	m, cmd = m.Update(tickMsg{})
+	if cmd != nil {
+		t.Fatal("tick must not re-arm after run finished")
+	}
+}
+
+func TestFmtElapsed(t *testing.T) {
+	cases := map[time.Duration]string{
+		0:                          "00:00",
+		5 * time.Second:            "00:05",
+		75 * time.Second:           "01:15",
+		(2*60 + 3) * time.Second:   "02:03",
+		(100*60 + 9) * time.Second: "100:09",
+	}
+	for d, want := range cases {
+		if got := fmtElapsed(d); got != want {
+			t.Fatalf("fmtElapsed(%v) = %q, want %q", d, got, want)
+		}
 	}
 }
 

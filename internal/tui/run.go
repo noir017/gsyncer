@@ -63,6 +63,22 @@ type runModel struct {
 	ch         chan tea.Msg
 	results    []syncer.Result
 	title      string
+	startedAt  time.Time
+	spinner    int
+}
+
+// spinnerFrames are the braille frames cycled once per tick while running.
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+// tickCmd schedules the next 1s animation tick.
+func tickCmd() tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg { return tickMsg{} })
+}
+
+// fmtElapsed renders a duration as mm:ss (minutes are not wrapped at 60).
+func fmtElapsed(d time.Duration) string {
+	d = d.Truncate(time.Second)
+	return fmt.Sprintf("%02d:%02d", int(d/time.Minute), int((d%time.Minute)/time.Second))
 }
 
 func newRun(cfg *config.Config, cfgPath, logDir string, runner execx.Runner, fsType snapshot.FSTypeFunc, now func() time.Time) runModel {
@@ -82,6 +98,8 @@ func (m *runModel) start(entries []config.Sync, dryRun bool) tea.Cmd {
 	m.results = nil
 	m.ch = make(chan tea.Msg, 64)
 	m.title = fmt.Sprintf("同步中: %d 条", len(entries))
+	m.startedAt = m.now()
+	m.spinner = 0
 	ch := m.ch
 
 	go func() {
@@ -105,7 +123,7 @@ func (m *runModel) start(entries []config.Sync, dryRun bool) tea.Cmd {
 		ch <- runDoneMsg{results: results, cancelled: ctx.Err() != nil, dur: dur}
 	}()
 
-	return waitForMsg(ch)
+	return tea.Batch(waitForMsg(ch), tickCmd())
 }
 
 // refreshContent re-renders the log buffer into the viewport, soft-wrapping
@@ -130,10 +148,25 @@ func (m runModel) Init() tea.Cmd { return nil }
 
 func (m runModel) Update(msg tea.Msg) (runModel, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tickMsg:
+		// Advance the spinner and re-arm only while running, so the ticker stops
+		// itself once the run finishes (any tick already in flight is a no-op).
+		if !m.running {
+			return m, nil
+		}
+		m.spinner++
+		return m, tickCmd()
+
 	case logLineMsg:
+		// Follow the tail only if the user was already at the bottom; if they
+		// scrolled up to read, leave their position alone. Sample AtBottom()
+		// BEFORE SetContent, since adding a line shifts what counts as bottom.
+		atBottom := m.vp.AtBottom()
 		m.lines = append(m.lines, msg.text)
 		m.refreshContent()
-		m.vp.GotoBottom()
+		if atBottom {
+			m.vp.GotoBottom()
+		}
 		return m, waitForMsg(m.ch)
 
 	case runDoneMsg:
@@ -183,7 +216,12 @@ func (m runModel) Update(msg tea.Msg) (runModel, tea.Cmd) {
 
 func (m runModel) View() string {
 	var b strings.Builder
-	b.WriteString(styleTitle.Render(m.title) + "\n\n")
+	title := m.title
+	if m.running {
+		frame := spinnerFrames[m.spinner%len(spinnerFrames)]
+		title = fmt.Sprintf("%s %s · 已用时 %s", frame, m.title, fmtElapsed(m.now().Sub(m.startedAt)))
+	}
+	b.WriteString(styleTitle.Render(title) + "\n\n")
 	b.WriteString(styleBox.Render(m.vp.View()) + "\n")
 	return b.String()
 }

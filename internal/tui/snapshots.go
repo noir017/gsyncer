@@ -45,6 +45,14 @@ type snapsModel struct {
 	confirmOverwrite bool
 	pendingSrc       string
 	pendingDst       string
+	confirmPrune     bool
+	pendingPruneN    int
+}
+
+// pruneDeps builds the syncer dependencies used for both counting and pruning,
+// so the confirmed count matches what PruneOne actually deletes.
+func (m snapsModel) pruneDeps() syncer.Deps {
+	return syncer.Deps{Runner: m.runner, FSType: m.fsType, Now: time.Now, Log: nopLogger{}}
 }
 
 func newSnaps(entry config.Sync, defaults config.Defaults, runner execx.Runner, fsType snapshot.FSTypeFunc) snapsModel {
@@ -121,10 +129,9 @@ func (m snapsModel) computeSizesCmd(epoch int) tea.Cmd {
 
 // pruneCmd runs retention prune off the UI goroutine.
 func (m snapsModel) pruneCmd() tea.Cmd {
-	entry, defaults, runner, fsType := m.entry, m.defaults, m.runner, m.fsType
+	entry, defaults, deps := m.entry, m.defaults, m.pruneDeps()
 	return func() tea.Msg {
-		res := syncer.PruneOne(context.Background(), entry, defaults,
-			syncer.Deps{Runner: runner, FSType: fsType, Now: time.Now, Log: nopLogger{}})
+		res := syncer.PruneOne(context.Background(), entry, defaults, deps, false)
 		if res.Err != nil {
 			return snapOpDoneMsg{status: "清理失败: " + res.Err.Error()}
 		}
@@ -222,6 +229,17 @@ func (m snapsModel) Update(msg tea.Msg) (snapsModel, tea.Cmd) {
 		return m, nil
 	}
 
+	if m.confirmPrune {
+		m.confirmPrune = false
+		if key.String() == "y" || key.String() == "Y" {
+			m.busy = true
+			m.status = "清理中…"
+			return m, m.pruneCmd()
+		}
+		m.status = "已取消清理"
+		return m, nil
+	}
+
 	if m.confirmOverwrite {
 		m.confirmOverwrite = false
 		if key.String() == "y" || key.String() == "Y" {
@@ -281,9 +299,18 @@ func (m snapsModel) Update(msg tea.Msg) (snapsModel, tea.Cmd) {
 		}
 		return m, nil
 	case "p":
-		m.busy = true
-		m.status = "清理中…"
-		return m, m.pruneCmd()
+		// Count first (cheap: list + retention partition) and confirm before
+		// deleting; the actual prune runs off the UI goroutine (see confirmPrune).
+		n, err := syncer.CountPrunable(context.Background(), m.entry, m.defaults, m.pruneDeps())
+		if err != nil {
+			m.status = "清理失败: " + err.Error()
+		} else if n == 0 {
+			m.status = "无可清理的快照"
+		} else {
+			m.pendingPruneN = n
+			m.confirmPrune = true
+		}
+		return m, nil
 	case "x":
 		if len(m.times) > 0 {
 			i := m.tbl.Cursor()
@@ -311,6 +338,8 @@ func (m snapsModel) View() string {
 	b.WriteString(m.tbl.View() + "\n")
 	if m.restoring {
 		b.WriteString("\n恢复到: " + m.restoreInput.View() + styleHelp.Render("  (enter 确认, esc 取消)"))
+	} else if m.confirmPrune {
+		b.WriteString("\n" + styleErr.Render(fmt.Sprintf("将删除 %d 份，确认？(y/N)", m.pendingPruneN)))
 	} else if m.confirmOverwrite {
 		b.WriteString("\n" + styleErr.Render("目标已存在，覆盖？(y/N)"))
 	} else if m.confirmDelete {
