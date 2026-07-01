@@ -65,20 +65,41 @@ func Load(path string) (*Config, error) {
 	if _, err := toml.DecodeFile(path, &c); err != nil {
 		return nil, err
 	}
+	// Expand a leading ~ in local_path so a value like "~/backups" resolves to a
+	// real absolute directory instead of silently creating a literal "./~" tree
+	// that rsync --delete then mirrors into.
+	for i := range c.Sync {
+		c.Sync[i].LocalPath = ExpandHome(c.Sync[i].LocalPath)
+	}
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
 	return &c, nil
 }
 
-// Save writes the config as TOML.
+// Save writes the config as TOML atomically: it encodes to a temp file in the
+// same directory and renames it into place, so a crash or disk-full mid-write
+// can never truncate or corrupt the live config that cron runs depend on.
 func Save(path string, c *Config) error {
-	f, err := os.Create(path)
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".config-*.toml.tmp")
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	return toml.NewEncoder(f).Encode(c)
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op once the rename succeeds
+	if err := toml.NewEncoder(tmp).Encode(c); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 // checkRetention returns an error if any retention field is negative.
@@ -121,6 +142,15 @@ func (c *Config) Validate() error {
 			if f.val == "" {
 				return fmt.Errorf("sync %q: %s is required", s.Name, f.name)
 			}
+		}
+		// local_path is the snapshot root that rsync --delete and prune operate
+		// on; a relative or root path here is a foot-gun (deletes into the cwd or
+		// the whole filesystem), so require a real absolute path.
+		if !filepath.IsAbs(s.LocalPath) {
+			return fmt.Errorf("sync %q: local_path must be an absolute path, got %q", s.Name, s.LocalPath)
+		}
+		if filepath.Clean(s.LocalPath) == "/" {
+			return fmt.Errorf("sync %q: local_path must not be the filesystem root", s.Name)
 		}
 		if s.Identity != "" {
 			if _, err := os.Stat(ExpandHome(s.Identity)); err != nil {

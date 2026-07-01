@@ -13,6 +13,33 @@ func d(s string) time.Time {
 	return t
 }
 
+// An all-zero policy must never delete everything: the newest snapshot is
+// always kept so a sync can't prune the snapshot it just created.
+func TestSelectAlwaysKeepsNewest(t *testing.T) {
+	in := []time.Time{
+		d("2026-06-01_000000"), d("2026-06-02_000000"), d("2026-06-03_000000"),
+	}
+	keep, del := Partition(in, Policy{}) // all zero
+	if len(keep) != 1 || !keep[0].Equal(d("2026-06-03_000000")) {
+		t.Fatalf("keep = %v, want only newest", keep)
+	}
+	if len(del) != 2 {
+		t.Fatalf("del = %v, want the two older snapshots", del)
+	}
+}
+
+// The floor is a floor, not a cap: it must not shrink a policy that already
+// keeps more than the newest.
+func TestFloorDoesNotReducePolicy(t *testing.T) {
+	in := []time.Time{
+		d("2026-06-01_000000"), d("2026-06-02_000000"), d("2026-06-03_000000"),
+	}
+	keep := Select(in, Policy{Recent: 2})
+	if len(keep) != 2 {
+		t.Fatalf("keep = %v, want 2", keep)
+	}
+}
+
 func TestRecentOnly(t *testing.T) {
 	in := []time.Time{
 		d("2026-06-01_000000"), d("2026-06-02_000000"), d("2026-06-03_000000"),
@@ -72,10 +99,12 @@ func TestPartitionAndEmpty(t *testing.T) {
 	}
 }
 
-func TestZeroPolicyKeepsNothing(t *testing.T) {
+// A zero policy keeps exactly the newest snapshot (the safety floor), never
+// nothing — otherwise a sync would prune the snapshot it just created.
+func TestZeroPolicyKeepsNewestOnly(t *testing.T) {
 	in := []time.Time{d("2026-06-01_000000")}
-	if k := Select(in, Policy{}); len(k) != 0 {
-		t.Fatalf("zero policy should keep nothing: %v", k)
+	if k := Select(in, Policy{}); len(k) != 1 || !k[0].Equal(d("2026-06-01_000000")) {
+		t.Fatalf("zero policy should keep the newest snapshot, got: %v", k)
 	}
 }
 
