@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"gsync/internal/config"
-	"gsync/internal/retention"
-	"gsync/internal/snapshot"
+	"gsyncer/internal/config"
+	"gsyncer/internal/retention"
+	"gsyncer/internal/snapshot"
 )
 
 // prunePlan resolves the backend and the exact set of snapshots the retention

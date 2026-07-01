@@ -9,10 +9,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"gsync/internal/config"
-	"gsync/internal/execx"
-	"gsync/internal/snapshot"
-	"gsync/internal/syncer"
+	"gsyncer/internal/config"
+	"gsyncer/internal/execx"
+	"gsyncer/internal/snapshot"
+	"gsyncer/internal/syncer"
 )
 
 func manyEntryCfg(n int) *config.Config {

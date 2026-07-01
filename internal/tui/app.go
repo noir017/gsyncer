@@ -6,9 +6,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"gsync/internal/config"
-	"gsync/internal/execx"
-	"gsync/internal/snapshot"
+	"gsyncer/internal/config"
+	"gsyncer/internal/execx"
+	"gsyncer/internal/snapshot"
 )
 
 type App struct {
@@ -220,7 +220,7 @@ func (a *App) View() string {
 	if a.confirmDelete {
 		b.WriteString("\n" + styleErr.Render("删除选中条目？(y/N)"))
 	} else if a.confirmQuit {
-		b.WriteString("\n" + styleErr.Render("退出 gsync？(Y/n)"))
+		b.WriteString("\n" + styleErr.Render("退出 gsyncer？(Y/n)"))
 	} else if a.status != "" {
 		st := styleStatus
 		if a.statusErr {

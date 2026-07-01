@@ -1,7 +1,7 @@
 name: CI
 
-# gsync 作为独立仓库推送到 Gitea 时，本文件位于仓库根的 .gitea/workflows/ci.yml。
-# 若整个父目录作为单仓库推送，需给各 run 步骤加 working-directory: gsync。
+# gsyncer 作为独立仓库推送到 Gitea 时，本文件位于仓库根的 .gitea/workflows/ci.yml。
+# 若整个父目录作为单仓库推送，需给各 run 步骤加 working-directory: gsyncer。
 on: [push, pull_request]
 
 permissions:
@@ -40,7 +40,7 @@ jobs:
           CGO_ENABLED: "0"
           GOOS: linux
           GOARCH: amd64
-        run: go build -trimpath -ldflags "-s -w" -o dist/gsync .
+        run: go build -trimpath -ldflags "-s -w" -o dist/gsyncer .
 
       - name: Test (with race detector)
         env:

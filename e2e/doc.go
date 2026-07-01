@@ -1,4 +1,4 @@
-// Package e2e holds gsync's end-to-end tests: they drive the compiled binary
+// Package e2e holds gsyncer's end-to-end tests: they drive the compiled binary
 // through its real ssh+rsync pipeline against live servers you supply.
 //
 // The tests are guarded by the `e2e` build tag (see e2e_test.go), so the default

@@ -1,5 +1,5 @@
 // Package notify delivers run-completion notifications so an unattended (cron)
-// gsync run that fails is not discovered only when a restore is needed. It
+// gsyncer run that fails is not discovered only when a restore is needed. It
 // supports two independent sinks, either or both of which may be configured: an
 // HTTP webhook (POST of a JSON body) and a shell command (run via `sh -c` with
 // run metadata exposed as GSYNC_* environment variables).
@@ -15,9 +15,9 @@ import (
 	"strconv"
 	"time"
 
-	"gsync/internal/config"
-	"gsync/internal/execx"
-	"gsync/internal/syncer"
+	"gsyncer/internal/config"
+	"gsyncer/internal/execx"
+	"gsyncer/internal/syncer"
 )
 
 // EntryResult is the per-entry portion of a notification payload.
@@ -148,14 +148,14 @@ func postWebhook(ctx context.Context, url string, body []byte, client *http.Clie
 
 func runCommand(ctx context.Context, command string, p Payload, body []byte, runner execx.Runner) error {
 	// Expose both a machine-readable blob (GSYNC_JSON) and convenient scalars so
-	// a command like `echo "$GSYNC_SUMMARY" | mail -s gsync admin@x` works without
+	// a command like `echo "$GSYNC_SUMMARY" | mail -s gsyncer admin@x` works without
 	// parsing JSON. execx has no stdin, so the JSON travels via the environment.
 	env := []string{
 		"GSYNC_STATUS=" + p.Status,
 		"GSYNC_OK=" + strconv.Itoa(p.OK),
 		"GSYNC_FAILED=" + strconv.Itoa(p.Failed),
 		"GSYNC_SKIPPED=" + strconv.Itoa(p.Skipped),
-		"GSYNC_SUMMARY=" + fmt.Sprintf("gsync %s: ok %d, failed %d, skipped %d, %.1fs",
+		"GSYNC_SUMMARY=" + fmt.Sprintf("gsyncer %s: ok %d, failed %d, skipped %d, %.1fs",
 			p.Status, p.OK, p.Failed, p.Skipped, p.DurationSec),
 		"GSYNC_JSON=" + string(body),
 	}

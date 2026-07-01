@@ -1,4 +1,4 @@
-# gsync
+# gsyncer
 
 一个带 **GFS 快照**的远程文件夹同步工具：通过 `ssh + rsync` 把远程服务器上的目录拉到本地，每次同步自动留一份带时间戳的快照，并按策略自动清理。
 
@@ -13,10 +13,10 @@
 需要 Go 1.22+，用仓库自带脚本编译：
 
 ```bash
-./build.sh          # 产出 dist/gsync（linux/amd64 静态单文件）
+./build.sh          # 产出 dist/gsyncer（linux/amd64 静态单文件）
 ```
 
-把 `dist/gsync` 拷到目标机器即可（无需安装任何依赖）。
+把 `dist/gsyncer` 拷到目标机器即可（无需安装任何依赖）。
 
 > 运行前提：本机装有 `ssh`、`rsync`，远程主机装有 `rsync`。
 
@@ -25,7 +25,7 @@
 不带参数直接运行就进入界面：
 
 ```bash
-./gsync
+./gsyncer
 ```
 
 首次启动条目列表是空的，界面底部会列出可用按键。
@@ -100,30 +100,30 @@ name=web host=example.com user=deploy remote=/srv/www local=/data/web
 适合放进 cron / 脚本，无需进入界面：
 
 ```bash
-gsync init                       # 在默认位置写一份带注释的示例配置（-force 覆盖）
-gsync sync                       # 同步全部条目
-gsync sync --name web            # 只同步名为 web 的条目
-gsync sync --server example.com  # 只同步该主机上的条目
-gsync sync --dry-run             # rsync -n 预演，不写入、不快照
-gsync sync --jobs 4              # 并发同步条目数（覆盖 defaults.jobs）
+gsyncer init                       # 在默认位置写一份带注释的示例配置（-force 覆盖）
+gsyncer sync                       # 同步全部条目
+gsyncer sync --name web            # 只同步名为 web 的条目
+gsyncer sync --server example.com  # 只同步该主机上的条目
+gsyncer sync --dry-run             # rsync -n 预演，不写入、不快照
+gsyncer sync --jobs 4              # 并发同步条目数（覆盖 defaults.jobs）
 
-gsync list                       # 列出所有条目
-gsync snapshots --name web       # 列出某条目的所有快照时间戳
-gsync status                     # 各条目最近快照年龄/份数/后端（监控用）
-gsync status --json              # 机器可读输出
-gsync status --stale-hours 26    # 任一条目超期返回退出码 3（0 关闭该行为）
+gsyncer list                       # 列出所有条目
+gsyncer snapshots --name web       # 列出某条目的所有快照时间戳
+gsyncer status                     # 各条目最近快照年龄/份数/后端（监控用）
+gsyncer status --json              # 机器可读输出
+gsyncer status --stale-hours 26    # 任一条目超期返回退出码 3（0 关闭该行为）
 
-gsync prune                      # 按保留策略清理快照（可加 --name）
-gsync prune --name web
-gsync prune --dry-run            # 只打印将删除的快照，不实际删除
+gsyncer prune                      # 按保留策略清理快照（可加 --name）
+gsyncer prune --name web
+gsyncer prune --dry-run            # 只打印将删除的快照，不实际删除
 
-gsync restore --name web --latest --to /tmp/rec        # 恢复最新快照
-gsync restore --name web --at 2026-06-24_030000 \
+gsyncer restore --name web --latest --to /tmp/rec        # 恢复最新快照
+gsyncer restore --name web --at 2026-06-24_030000 \
               --to /tmp/rec --force                     # 恢复指定快照并覆盖目标
 
-gsync check                      # 只校验配置，不同步
-gsync version                    # 版本号
-gsync help                       # 显示帮助（也支持 -h / --help）
+gsyncer check                      # 只校验配置，不同步
+gsyncer version                    # 版本号
+gsyncer help                       # 显示帮助（也支持 -h / --help）
 ```
 
 - 通用标志：`--config <path>` 指定配置文件。
@@ -134,7 +134,7 @@ gsync help                       # 显示帮助（也支持 -h / --help）
 定时同步示例（crontab，每天 3:00）：
 
 ```cron
-0 3 * * * /usr/local/bin/gsync sync >> /var/log/gsync.log 2>&1
+0 3 * * * /usr/local/bin/gsyncer sync >> /var/log/gsyncer.log 2>&1
 ```
 
 ---
@@ -169,7 +169,7 @@ gsync help                       # 显示帮助（也支持 -h / --help）
   on_failure = true              # 有条目失败时通知
   on_success = false             # 全部成功时也通知
   webhook = "https://example.com/hook"                       # 收 JSON POST
-  command = "echo \"$GSYNC_SUMMARY\" | mail -s gsync admin@x" # 走 sh -c
+  command = "echo \"$GSYNC_SUMMARY\" | mail -s gsyncer admin@x" # 走 sh -c
 
 [[sync]]
   name        = "web"            # 唯一名称（必填）
@@ -192,7 +192,7 @@ gsync help                       # 显示帮助（也支持 -h / --help）
     yearly     = 5
 ```
 
-> 提示：`gsync init` 会生成一份带上述注释的起始配置，改好后用 `gsync check` 校验。
+> 提示：`gsyncer init` 会生成一份带上述注释的起始配置，改好后用 `gsyncer check` 校验。
 
 ### 字段说明
 
@@ -220,7 +220,7 @@ gsync help                       # 显示帮助（也支持 -h / --help）
 > ⚠️ 钩子**不是事务性**的：`post_sync` 只在同步全程成功后运行。若 `pre_sync` 成功
 > 后中途失败（rsync/快照报错），`post_sync` 不会执行。因此若用 `pre_sync` 停服务、
 > `post_sync` 重启，中途失败会让服务停着。请让 `pre_sync` 的副作用可自恢复（例如用
-> systemd 的 `RuntimeMaxSec` 自动重启），或把停/启逻辑放在 gsync 之外统一编排。
+> systemd 的 `RuntimeMaxSec` 自动重启），或把停/启逻辑放在 gsyncer 之外统一编排。
 
 ### `[notify]` 字段
 
@@ -242,7 +242,7 @@ webhook 的 JSON 含每条目的 `host`/`ok`/`error`/`files`/`bytes`/`duration_s
 对每个同步条目，依次执行：
 
 1. **预检**：检查本地 `rsync` 是否可用（远程 `rsync` 不再单独探测，省一次 ssh 握手；若远程缺失，rsync 自身会以 127/"command not found" 失败并给出安装提示）。
-2. **拉取**：`rsync -a --delete` 把 `user@host:remote_path/` 同步到本地 `local_path/current/`，并应用忽略规则。传输恒带 `--partial`（配合 `--partial-dir=.gsync-partial` 断点续传、半成品不落入 `current/`）与 `--numeric-ids`（按数字保留 uid/gid）；`compress` 开启时附加 `-z`。
+2. **拉取**：`rsync -a --delete` 把 `user@host:remote_path/` 同步到本地 `local_path/current/`，并应用忽略规则。传输恒带 `--partial`（配合 `--partial-dir=.gsyncer-partial` 断点续传、半成品不落入 `current/`）与 `--numeric-ids`（按数字保留 uid/gid）；`compress` 开启时附加 `-z`。
 3. **快照**：把 `current/` 快照到 `local_path/snapshots/<时间戳>/`
    - 默认用**硬链接**后端：未改动的文件与上一份共享 inode，几乎不额外占空间；在支持 reflink 的 CoW 文件系统（如 xfs reflink、bcachefs）上自动升级为 **reflink** 拷贝——每份快照有独立 inode、数据块按需写时复制，既省空间又不会因就地改写 `current/` 里的文件而牵连旧快照（run 汇总里模式会显示 `reflink`）；
    - 若 `local_path` 在 btrfs 上且系统有 `btrfs` 命令，则用 **btrfs** 子卷快照。
@@ -278,12 +278,12 @@ local_path/
 ## 编译细节与开发
 
 ```bash
-./build.sh                        # 默认 dist/gsync (linux/amd64)
-./build.sh /usr/local/bin/gsync   # 指定输出路径
+./build.sh                        # 默认 dist/gsyncer (linux/amd64)
+./build.sh /usr/local/bin/gsyncer   # 指定输出路径
 GOARCH=arm64 ./build.sh           # 交叉编译 arm64
 ```
 
-脚本用 `CGO_ENABLED=0` + `-ldflags "-s -w" -trimpath` 产出静态、精简、可复现的二进制，并自动校验 `ldd` 为 `not a dynamic executable`。也可直接 `CGO_ENABLED=0 go build -o gsync .`。
+脚本用 `CGO_ENABLED=0` + `-ldflags "-s -w" -trimpath` 产出静态、精简、可复现的二进制，并自动校验 `ldd` 为 `not a dynamic executable`。也可直接 `CGO_ENABLED=0 go build -o gsyncer .`。
 
 ### 运行测试
 

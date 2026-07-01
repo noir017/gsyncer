@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"gsync/internal/config"
-	"gsync/internal/execx"
+	"gsyncer/internal/config"
+	"gsyncer/internal/execx"
 )
 
 func TestCountPrunableMatchesPruneOne(t *testing.T) {

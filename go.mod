@@ -1,4 +1,4 @@
-module gsync
+module gsyncer
 
 go 1.22
 

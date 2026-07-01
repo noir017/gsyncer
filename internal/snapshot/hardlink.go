@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"gsync/internal/execx"
+	"gsyncer/internal/execx"
 )
 
 // Hardlink implements Backend using `cp -al` hardlink copies. It works on any
@@ -48,7 +48,7 @@ func (h *Hardlink) Mode() string {
 // unlike =auto, fails instead of silently falling back to a full data copy — so
 // a true result really means CoW). Both probe files are removed before return.
 func probeReflink(ctx context.Context, r execx.Runner, dir string) bool {
-	src := filepath.Join(dir, ".gsync-reflink-probe")
+	src := filepath.Join(dir, ".gsyncer-reflink-probe")
 	dst := src + ".copy"
 	_ = os.Remove(dst)
 	if err := os.WriteFile(src, []byte("x"), 0o600); err != nil {

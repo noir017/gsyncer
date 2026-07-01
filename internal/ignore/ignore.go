@@ -11,8 +11,8 @@ import "strings"
 // list is emitted in reverse so gitignore's last-match-wins maps onto rsync's
 // first-match-wins.
 //
-// The pattern BODY is forwarded to rsync verbatim; gsync does not rewrite the
-// glob. This works because gsync syncs a single remote root to a single local
+// The pattern BODY is forwarded to rsync verbatim; gsyncer does not rewrite the
+// glob. This works because gsyncer syncs a single remote root to a single local
 // directory, so rsync's filter-rule semantics line up with gitignore's for the
 // common cases:
 //

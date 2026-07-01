@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"gsync/internal/execx"
+	"gsyncer/internal/execx"
 )
 
 // mkdirCp is a FakeRunner handler that emulates a non-CoW filesystem: the
@@ -115,7 +115,7 @@ func TestHardlinkCreateUsesReflinkWhenSupported(t *testing.T) {
 		t.Fatalf("mode = %q, want reflink on CoW fs", be.(*Hardlink).Mode())
 	}
 	// The probe files must not linger in the snapshots dir.
-	if _, err := os.Stat(filepath.Join(root, "snapshots", ".gsync-reflink-probe")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(root, "snapshots", ".gsyncer-reflink-probe")); !os.IsNotExist(err) {
 		t.Fatalf("probe file left behind, stat err = %v", err)
 	}
 }

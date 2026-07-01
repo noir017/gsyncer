@@ -4,11 +4,11 @@ import (
 	"context"
 	"strconv"
 
-	"gsync/internal/config"
+	"gsyncer/internal/config"
 )
 
 // hookEnv builds the GSYNC_* environment exposed to pre/post-sync hooks so a
-// command can act on the entry without gsync interpolating values into the
+// command can act on the entry without gsyncer interpolating values into the
 // shell string. extra carries phase-specific vars (e.g. the created snapshot).
 func hookEnv(s config.Sync, phase string, extra []string) []string {
 	env := []string{

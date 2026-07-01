@@ -12,10 +12,10 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// StarterTemplate is a commented example config written by `gsync init`. It
-// decodes to a valid, empty-of-entries config (so `gsync list` works right
+// StarterTemplate is a commented example config written by `gsyncer init`. It
+// decodes to a valid, empty-of-entries config (so `gsyncer list` works right
 // after init); users uncomment the [[sync]] block to add their first entry.
-const StarterTemplate = `# gsync 配置文件
+const StarterTemplate = `# gsyncer 配置文件
 # 每个 [[sync]] 块描述一个「远程目录 -> 本地目录」的备份任务。
 # 去掉下面示例块的注释并按需修改即可。
 
@@ -146,7 +146,7 @@ func Load(path string) (*Config, error) {
 	var c Config
 	if _, err := toml.DecodeFile(path, &c); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("config file not found at %s; run 'gsync init' to create one, or pass -config <path>", path)
+			return nil, fmt.Errorf("config file not found at %s; run 'gsyncer init' to create one, or pass -config <path>", path)
 		}
 		return nil, err
 	}

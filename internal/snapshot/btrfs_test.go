@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"gsync/internal/execx"
+	"gsyncer/internal/execx"
 )
 
 func TestBtrfsCreateInvokesSubvolumeSnapshot(t *testing.T) {
