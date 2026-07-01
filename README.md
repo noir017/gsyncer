@@ -108,15 +108,27 @@ gsync sync --dry-run             # rsync -n 预演，不写入、不快照
 
 gsync list                       # 列出所有条目
 gsync snapshots --name web       # 列出某条目的所有快照时间戳
+gsync status                     # 各条目最近快照年龄/份数/后端（监控用）
+gsync status --json              # 机器可读输出
+gsync status --stale-hours 26    # 任一条目超期返回退出码 3（0 关闭该行为）
+
 gsync prune                      # 按保留策略清理快照（可加 --name）
 gsync prune --name web
+gsync prune --dry-run            # 只打印将删除的快照，不实际删除
 
+gsync restore --name web --latest --to /tmp/rec        # 恢复最新快照
+gsync restore --name web --at 2026-06-24_030000 \
+              --to /tmp/rec --force                     # 恢复指定快照并覆盖目标
+
+gsync check                      # 只校验配置，不同步
 gsync version                    # 版本号
 gsync help                       # 显示帮助（也支持 -h / --help）
 ```
 
 - 通用标志：`--config <path>` 指定配置文件。
-- 退出码：任一条目失败返回非 0，方便脚本判断。
+- 退出码：任一条目失败返回非 0，方便脚本判断；`status --stale-hours` 超期返回 3。
+- `restore`：需 `--name` 与 `--to`，并二选一 `--at <时间戳>` 或 `--latest`；不会覆盖
+  `current/` 目录，目标已存在时须加 `--force`（先清空再 `cp -a`）。
 
 定时同步示例（crontab，每天 3:00）：
 
@@ -137,6 +149,9 @@ gsync help                       # 显示帮助（也支持 -h / --help）
 ```toml
 [defaults]
   ssh_port = 22                  # 条目未指定端口时的默认值（0 表示回退到 22）
+  bwlimit  = 0                   # rsync 限速 KB/s，0 = 不限速（条目可覆盖）
+  pre_sync  = ""                 # 每个条目 rsync 前执行的命令（sh -c）
+  post_sync = ""                 # 同步成功后执行的命令（sh -c）
   [defaults.retention]           # 条目未覆盖时的默认保留策略
     recent     = 7
     monthly    = 6
@@ -146,6 +161,12 @@ gsync help                       # 显示帮助（也支持 -h / --help）
 [log]
   keep_days  = 30                # 运行日志保留天数（0 表示不按天清理）
   keep_count = 100               # 运行日志保留份数（0 表示不按份数清理）
+
+[notify]                         # 运行结束通知（默认全关，两个开关都为 false 时不发）
+  on_failure = true              # 有条目失败时通知
+  on_success = false             # 全部成功时也通知
+  webhook = "https://example.com/hook"                       # 收 JSON POST
+  command = "echo \"$GSYNC_SUMMARY\" | mail -s gsync admin@x" # 走 sh -c
 
 [[sync]]
   name        = "web"            # 唯一名称（必填）
@@ -157,12 +178,17 @@ gsync help                       # 显示帮助（也支持 -h / --help）
   local_path  = "/data/web"      # 本地目录（必填）
   ignore      = ["__pycache__/", "*.pyc", "node_modules/", ".git/"]
   strict_host_key = false        # false=accept-new，true=严格校验 host key
+  bwlimit     = 2048             # 可选：覆盖 defaults.bwlimit
+  pre_sync    = ""               # 可选：覆盖 defaults.pre_sync
+  post_sync   = ""               # 可选：覆盖 defaults.post_sync
   [sync.retention]               # 可选：覆盖该条目的保留策略（留空字段回退到 defaults）
     recent     = 14
     monthly    = 12
     semiannual = 4
     yearly     = 5
 ```
+
+> 提示：`gsync init` 会生成一份带上述注释的起始配置，改好后用 `gsync check` 校验。
 
 ### 字段说明
 
@@ -177,7 +203,27 @@ gsync help                       # 显示帮助（也支持 -h / --help）
 | `identity` | | ssh 私钥；填写时该文件必须存在 |
 | `ignore` | | gitignore 风格忽略规则，每行一条 |
 | `strict_host_key` | | `true` 严格校验，`false` 自动接受新主机（默认） |
+| `bwlimit` | | rsync 限速 KB/s（0 = 不限速）；覆盖 `defaults.bwlimit` |
+| `pre_sync` | | rsync 前执行的命令；失败则跳过该条目（覆盖 `defaults.pre_sync`） |
+| `post_sync` | | 同步成功后执行的命令；失败仅告警（覆盖 `defaults.post_sync`） |
 | `retention` | | 覆盖默认保留策略，未填字段回退到 `defaults.retention` |
+
+`pre_sync` / `post_sync` 经 `sh -c` 执行，条目信息以环境变量传入：`GSYNC_NAME`、
+`GSYNC_HOST`、`GSYNC_USER`、`GSYNC_REMOTE_PATH`、`GSYNC_LOCAL_PATH`、`GSYNC_PHASE`；
+`post_sync` 另有 `GSYNC_SNAPSHOT` / `GSYNC_FILES` / `GSYNC_BYTES`。预演（`--dry-run`）不执行钩子。
+
+### `[notify]` 字段
+
+| 字段 | 说明 |
+|------|------|
+| `on_failure` | 有条目失败时通知（默认 `false`） |
+| `on_success` | 全部成功时也通知（默认 `false`） |
+| `webhook` | 通知地址；收到 JSON POST（须 `http://` / `https://`） |
+| `command` | 通知命令，经 `sh -c` 执行 |
+
+通知命令可用环境变量：`GSYNC_STATUS`（`success`/`failure`）、`GSYNC_OK`、
+`GSYNC_FAILED`、`GSYNC_SKIPPED`、`GSYNC_SUMMARY`（一句话摘要）、`GSYNC_JSON`（完整 JSON）。
+webhook 的 JSON 含每条目的 `host`/`ok`/`error`/`files`/`bytes`/`duration_sec`。
 
 ---
 
