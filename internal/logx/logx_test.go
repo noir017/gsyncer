@@ -49,6 +49,47 @@ func TestAppendSummary(t *testing.T) {
 	}
 }
 
+func TestRunLoggerPrivatePerms(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "logs")
+	l, err := NewRunLogger(dir, ts("2026-06-24_030000"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	di, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if di.Mode().Perm() != 0o700 {
+		t.Fatalf("log dir perm = %#o, want 0700", di.Mode().Perm())
+	}
+	fi, err := os.Stat(filepath.Join(dir, "2026-06-24_030000.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Fatalf("log file perm = %#o, want 0600", fi.Mode().Perm())
+	}
+}
+
+func TestAppendSummaryTightensPreexisting(t *testing.T) {
+	dir := t.TempDir()
+	// Simulate a summary.log left behind with loose perms by an older version.
+	if err := os.WriteFile(filepath.Join(dir, "summary.log"), []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := AppendSummary(dir, "run ok"); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(filepath.Join(dir, "summary.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Fatalf("summary.log perm = %#o, want 0600", fi.Mode().Perm())
+	}
+}
+
 func TestCleanupByCountAndDays(t *testing.T) {
 	dir := t.TempDir()
 	names := []string{

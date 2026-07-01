@@ -16,17 +16,29 @@ type RunLogger struct {
 	f *os.File
 }
 
-// NewRunLogger creates dir (if needed) and opens dir/<ts>.log.
+// NewRunLogger creates dir (if needed) and opens dir/<ts>.log. Logs record
+// hostnames, users and key paths, so both the directory and files are kept
+// private (0700/0600); an explicit chmod defeats a permissive umask and tightens
+// any pre-existing entry.
 func NewRunLogger(dir string, ts time.Time) (*RunLogger, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := ensurePrivateDir(dir); err != nil {
 		return nil, err
 	}
 	f, err := os.OpenFile(filepath.Join(dir, ts.Format(tsLayout)+".log"),
-		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, err
 	}
+	_ = f.Chmod(0o600)
 	return &RunLogger{f: f}, nil
+}
+
+// ensurePrivateDir creates dir if absent and enforces 0700 on it.
+func ensurePrivateDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	return os.Chmod(dir, 0o700)
 }
 
 func (l *RunLogger) write(level, format string, a ...any) {
@@ -43,17 +55,19 @@ func (l *RunLogger) Errorf(format string, a ...any) { l.write("ERROR", format, a
 // Close closes the underlying file.
 func (l *RunLogger) Close() error { return l.f.Close() }
 
-// AppendSummary appends one line to dir/summary.log.
+// AppendSummary appends one line to dir/summary.log (kept private, see
+// NewRunLogger).
 func AppendSummary(dir, line string) error {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := ensurePrivateDir(dir); err != nil {
 		return err
 	}
 	f, err := os.OpenFile(filepath.Join(dir, "summary.log"),
-		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
+	_ = f.Chmod(0o600)
 	_, err = fmt.Fprintln(f, line)
 	return err
 }
