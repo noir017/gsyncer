@@ -57,7 +57,10 @@ func List(root string) ([]time.Time, error) {
 		if !e.IsDir() {
 			continue
 		}
-		t, err := time.Parse(TSLayout, e.Name())
+		// Snapshot dirs are named with Create's local-time Format (deps.Now is the
+		// local wall clock), so parse in the same zone; time.Parse would assume UTC
+		// and skew status age / --stale-hours by the local offset.
+		t, err := time.ParseInLocation(TSLayout, e.Name(), time.Local)
 		if err != nil {
 			continue
 		}
