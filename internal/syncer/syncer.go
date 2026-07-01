@@ -26,6 +26,9 @@ type Deps struct {
 	FSType snapshot.FSTypeFunc
 	Log    Logger
 	Now    func() time.Time
+	// KnownHostsFile pins the ssh known_hosts store (per-config directory). Empty
+	// falls back to ssh's default (~/.ssh/known_hosts).
+	KnownHostsFile string
 }
 
 // Result is the outcome of syncing one entry.
@@ -84,7 +87,7 @@ func SyncOne(ctx context.Context, s config.Sync, d config.Defaults, deps Deps, d
 		return res
 	}
 	if _, err := deps.Runner.Run(ctx, "ssh",
-		sshCmdArgs(s.Identity, port, s.StrictHostKey, s.User, s.Host, "command -v rsync")...); err != nil {
+		sshCmdArgs(s.Identity, port, s.StrictHostKey, deps.KnownHostsFile, s.User, s.Host, "command -v rsync")...); err != nil {
 		deps.Log.Errorf("[%s] remote rsync missing on %s: %s", s.Name, s.Host, installHint())
 		res.Err = err
 		return res
@@ -105,7 +108,7 @@ func SyncOne(ctx context.Context, s config.Sync, d config.Defaults, deps Deps, d
 	res.Mode = be.Name()
 	deps.Log.Infof("[%s] snapshot mode: %s", s.Name, be.Name())
 
-	out, err := deps.Runner.Run(ctx, "rsync", buildRsyncArgs(s, port, cur, dryRun)...)
+	out, err := deps.Runner.Run(ctx, "rsync", buildRsyncArgs(s, port, cur, dryRun, deps.KnownHostsFile)...)
 	if err != nil {
 		if rsyncPartialWarning(out.Code) {
 			// 23/24 mean the transfer mostly succeeded (some files failed or

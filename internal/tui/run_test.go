@@ -13,7 +13,7 @@ import (
 )
 
 func newTestRun() runModel {
-	return newRun(&config.Config{}, "", &execx.FakeRunner{}, nonBtrfsFS, time.Now)
+	return newRun(&config.Config{}, "", "", &execx.FakeRunner{}, nonBtrfsFS, time.Now)
 }
 
 func TestRunAppendsLogLines(t *testing.T) {
