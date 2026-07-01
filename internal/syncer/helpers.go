@@ -114,7 +114,9 @@ func ensureTrailingSlash(p string) string {
 // word-splitting/globbing on the remote path, so spaces or shell metacharacters
 // in remote_path are transferred literally instead of being re-interpreted.
 func buildRsyncArgs(s config.Sync, port int, currentPath string, dryRun bool, knownHosts string) []string {
-	args := []string{"-a", "-s", "--delete", "--info=stats2", "--timeout", strconv.Itoa(rsyncIOTimeout)}
+	// stats2 feeds parseStats (Files/Bytes); progress2 emits an aggregate
+	// progress line that RunStream forwards live to the run screen.
+	args := []string{"-a", "-s", "--delete", "--info=stats2,progress2", "--timeout", strconv.Itoa(rsyncIOTimeout)}
 	if dryRun {
 		args = append(args, "-n")
 	}
