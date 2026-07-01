@@ -102,6 +102,7 @@ gsync sync                       # 同步全部条目
 gsync sync --name web            # 只同步名为 web 的条目
 gsync sync --server example.com  # 只同步该主机上的条目
 gsync sync --dry-run             # rsync -n 预演，不写入、不快照
+gsync sync --jobs 4              # 并发同步条目数（覆盖 defaults.jobs）
 
 gsync list                       # 列出所有条目
 gsync snapshots --name web       # 列出某条目的所有快照时间戳
@@ -133,6 +134,7 @@ gsync version                    # 版本号
 ```toml
 [defaults]
   ssh_port = 22                  # 条目未指定端口时的默认值（0 表示回退到 22）
+  jobs     = 2                   # 并发同步的条目数（0 / 省略表示默认 2）
   [defaults.retention]           # 条目未覆盖时的默认保留策略
     recent     = 7
     monthly    = 6

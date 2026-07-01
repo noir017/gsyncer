@@ -89,6 +89,7 @@ func cmdSync(argv []string) int {
 	name := fs.String("name", "", "only this entry")
 	server := fs.String("server", "", "only entries on this host")
 	dry := fs.Bool("dry-run", false, "rsync -n, no snapshot")
+	jobs := fs.Int("jobs", 0, "max entries to sync concurrently (0 = defaults.jobs)")
 	_ = fs.Parse(argv)
 
 	cfg, err := loadConfig(*cfgFlag)
@@ -108,7 +109,11 @@ func cmdSync(argv []string) int {
 	ctx, stop := signalCtx()
 	defer stop()
 	entries := selectEntries(cfg.Sync, *name, *server)
-	results := syncer.SyncMany(ctx, entries, cfg.Defaults, realDeps(rl, knownHostsPath(*cfgFlag, exeDir())), *dry)
+	n := *jobs
+	if n <= 0 {
+		n = cfg.Defaults.EffectiveJobs()
+	}
+	results := syncer.SyncMany(ctx, entries, cfg.Defaults, realDeps(rl, knownHostsPath(*cfgFlag, exeDir())), *dry, n)
 
 	line := summaryLine(results, time.Since(start))
 	rl.Infof("%s", line)

@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"sync"
 )
 
 // Result holds the captured output of a command.
@@ -48,16 +49,22 @@ type Call struct {
 }
 
 // FakeRunner is a test double that records calls and returns scripted results.
+// Run is safe for concurrent use so a single FakeRunner can back a parallel
+// SyncMany under the race detector.
 type FakeRunner struct {
+	mu      sync.Mutex
 	Calls   []Call
 	Handler func(name string, args []string) (Result, error)
 }
 
 // Run implements Runner.
 func (f *FakeRunner) Run(_ context.Context, name string, args ...string) (Result, error) {
+	f.mu.Lock()
 	f.Calls = append(f.Calls, Call{Name: name, Args: args})
-	if f.Handler != nil {
-		return f.Handler(name, args)
+	h := f.Handler
+	f.mu.Unlock()
+	if h != nil {
+		return h(name, args)
 	}
 	return Result{}, nil
 }

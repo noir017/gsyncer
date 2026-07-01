@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -130,8 +131,8 @@ func TestSyncOneSkipsWhenLocked(t *testing.T) {
 	}
 }
 
-// A cancelled context stops SyncMany from launching further entries rather than
-// reporting them as spurious failures.
+// A cancelled context stops SyncMany from launching entries; they are reported
+// as Skipped (order preserved) rather than run against a dead context.
 func TestSyncManyStopsOnCancelledContext(t *testing.T) {
 	fr := &execx.FakeRunner{Handler: func(name string, args []string) (execx.Result, error) {
 		return execx.Result{}, nil
@@ -139,14 +140,100 @@ func TestSyncManyStopsOnCancelledContext(t *testing.T) {
 	deps := Deps{Runner: fr, FSType: ext4FS, Log: &captureLog{}, Now: time.Now}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // already cancelled before any entry runs
-	results := SyncMany(ctx, []config.Sync{okEntry(t), okEntry(t)}, config.Defaults{}, deps, false)
-	if len(results) != 0 {
-		t.Fatalf("expected no entries processed after cancel, got %d results", len(results))
+	results := SyncMany(ctx, []config.Sync{okEntry(t), okEntry(t)}, config.Defaults{}, deps, false, 2)
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results (all skipped), got %d", len(results))
+	}
+	for _, r := range results {
+		if !r.Skipped || r.OK {
+			t.Fatalf("expected Skipped and not OK after cancel, got %+v", r)
+		}
 	}
 	for _, c := range fr.Calls {
 		if c.Name == "rsync" || c.Name == "ssh" {
 			t.Fatalf("no command should run after cancel, got %+v", c)
 		}
+	}
+}
+
+// SyncMany writes results by index, so the returned order matches input order
+// even when entries complete out of order under concurrency.
+func TestSyncManyParallelStableOrder(t *testing.T) {
+	var entries []config.Sync
+	for i := 0; i < 8; i++ {
+		e := okEntry(t)
+		e.Name = string(rune('a' + i))
+		entries = append(entries, e)
+	}
+	fr := &execx.FakeRunner{Handler: func(name string, args []string) (execx.Result, error) {
+		if name == "rsync" && len(args) == 1 && args[0] == "--version" {
+			return execx.Result{Stdout: "v"}, nil
+		}
+		if name == "rsync" {
+			return execx.Result{Stdout: "Number of regular files transferred: 1\n"}, nil
+		}
+		if name == "cp" {
+			_ = os.MkdirAll(args[2], 0o755)
+		}
+		return execx.Result{}, nil
+	}}
+	d := config.Defaults{Retention: config.Retention{Recent: 5}}
+	deps := Deps{Runner: fr, FSType: ext4FS, Log: &captureLog{},
+		Now: func() time.Time { return time.Date(2026, 6, 24, 3, 0, 0, 0, time.UTC) }}
+	results := SyncMany(context.Background(), entries, d, deps, false, 4)
+	if len(results) != len(entries) {
+		t.Fatalf("want %d results, got %d", len(entries), len(results))
+	}
+	for i, r := range results {
+		if r.Name != entries[i].Name {
+			t.Fatalf("result[%d].Name = %q, want %q", i, r.Name, entries[i].Name)
+		}
+		if !r.OK || r.Err != nil {
+			t.Fatalf("result[%d] = %+v", i, r)
+		}
+	}
+}
+
+// SyncMany must never run more than `jobs` entries at once, and with jobs > 1 it
+// must actually overlap them (proving it is not silently serial).
+func TestSyncManyRespectsJobsLimit(t *testing.T) {
+	var inflight, maxInflight atomic.Int32
+	fr := &execx.FakeRunner{Handler: func(name string, args []string) (execx.Result, error) {
+		if name == "rsync" && len(args) == 1 && args[0] == "--version" {
+			n := inflight.Add(1)
+			for {
+				m := maxInflight.Load()
+				if n <= m || maxInflight.CompareAndSwap(m, n) {
+					break
+				}
+			}
+			time.Sleep(20 * time.Millisecond) // hold the slot so overlap is observable
+			inflight.Add(-1)
+			return execx.Result{Stdout: "v"}, nil
+		}
+		if name == "rsync" {
+			return execx.Result{Stdout: "Number of regular files transferred: 1\n"}, nil
+		}
+		if name == "cp" {
+			_ = os.MkdirAll(args[2], 0o755)
+		}
+		return execx.Result{}, nil
+	}}
+	var entries []config.Sync
+	for i := 0; i < 6; i++ {
+		e := okEntry(t)
+		e.Name = "e" + string(rune('0'+i))
+		entries = append(entries, e)
+	}
+	d := config.Defaults{Retention: config.Retention{Recent: 5}}
+	deps := Deps{Runner: fr, FSType: ext4FS, Log: &captureLog{},
+		Now: func() time.Time { return time.Date(2026, 6, 24, 3, 0, 0, 0, time.UTC) }}
+	SyncMany(context.Background(), entries, d, deps, false, 2)
+	if got := maxInflight.Load(); got > 2 {
+		t.Fatalf("max concurrency %d exceeded jobs limit 2", got)
+	}
+	if got := maxInflight.Load(); got < 2 {
+		t.Fatalf("expected real overlap with jobs=2, max concurrency was only %d", got)
 	}
 }
 
@@ -218,7 +305,7 @@ func TestSyncManyIsolatesFailures(t *testing.T) {
 	good.Host = "h-good"
 	deps := Deps{Runner: fr, FSType: ext4FS, Log: &captureLog{},
 		Now: func() time.Time { return time.Date(2026, 6, 24, 3, 0, 0, 0, time.UTC) }}
-	results := SyncMany(context.Background(), []config.Sync{good, bad}, config.Defaults{}, deps, false)
+	results := SyncMany(context.Background(), []config.Sync{good, bad}, config.Defaults{}, deps, false, 2)
 	if len(results) != 2 {
 		t.Fatalf("want 2 results, got %d", len(results))
 	}
