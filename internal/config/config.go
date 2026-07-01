@@ -32,10 +32,26 @@ type LogConfig struct {
 	KeepCount int `toml:"keep_count"`
 }
 
+// defaultJobs is the fallback concurrency for SyncMany when defaults.jobs is
+// unset (<= 0). Kept conservative: the typical deploy target is a small VPS, and
+// each concurrent entry spawns an rsync+ssh pair, so 2 balances speed-up against
+// memory/disk/SSH contention. Override via defaults.jobs or `sync --jobs`.
+const defaultJobs = 2
+
 // Defaults holds project-wide defaults.
 type Defaults struct {
 	SSHPort   int       `toml:"ssh_port"`
+	Jobs      int       `toml:"jobs"`
 	Retention Retention `toml:"retention"`
+}
+
+// EffectiveJobs resolves the concurrency for a run: a positive defaults.jobs
+// wins, otherwise defaultJobs. Callers may still override with a CLI flag.
+func (d Defaults) EffectiveJobs() int {
+	if d.Jobs > 0 {
+		return d.Jobs
+	}
+	return defaultJobs
 }
 
 // Sync is one remote-folder sync entry.

@@ -6,7 +6,10 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"sync"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 
 	"gsync/internal/config"
 	"gsync/internal/execx"
@@ -18,6 +21,26 @@ import (
 type Logger interface {
 	Infof(format string, a ...any)
 	Errorf(format string, a ...any)
+}
+
+// lockedLogger serializes writes to an underlying Logger so concurrent SyncOne
+// goroutines (see SyncMany) don't race on the shared RunLogger/chanLogger. Each
+// Infof/Errorf emits one line, so a single mutex around the call is sufficient.
+type lockedLogger struct {
+	mu    *sync.Mutex
+	inner Logger
+}
+
+func (l *lockedLogger) Infof(format string, a ...any) {
+	l.mu.Lock()
+	l.inner.Infof(format, a...)
+	l.mu.Unlock()
+}
+
+func (l *lockedLogger) Errorf(format string, a ...any) {
+	l.mu.Lock()
+	l.inner.Errorf(format, a...)
+	l.mu.Unlock()
 }
 
 // Deps are the injectable dependencies for syncing.
@@ -64,6 +87,13 @@ func toPolicy(r config.Retention) retention.Policy {
 // are reported via Result.Err with res.OK == false.
 func SyncOne(ctx context.Context, s config.Sync, d config.Defaults, deps Deps, dryRun bool) Result {
 	res := Result{Name: s.Name}
+	// If the run was already cancelled (e.g. ctrl+c while this entry waited for a
+	// concurrency slot), skip cleanly rather than letting preflight fail against a
+	// dead context and report a spurious FAILED.
+	if ctx.Err() != nil {
+		res.Skipped = true
+		return res
+	}
 	port := s.EffectivePort(d)
 
 	// Serialize runs sharing this local root so overlapping cron ticks don't
@@ -171,18 +201,48 @@ func SyncOne(ctx context.Context, s config.Sync, d config.Defaults, deps Deps, d
 	return res
 }
 
-// SyncMany runs entries sequentially, isolating per-entry failures.
-func SyncMany(ctx context.Context, entries []config.Sync, d config.Defaults, deps Deps, dryRun bool) []Result {
-	results := make([]Result, 0, len(entries))
-	for _, s := range entries {
+// SyncMany runs entries with bounded concurrency, isolating per-entry failures.
+// At most jobs entries run at once (jobs <= 0 is treated as 1). Results are
+// written to a fixed-length slice by index, so the returned order always matches
+// the input order regardless of completion order. Entries not launched because
+// the run was cancelled are reported as Skipped rather than omitted.
+//
+// Per-entry isolation still comes from the per-local_path flock in SyncOne; two
+// entries sharing a local_path simply serialize (the loser is Skipped). The only
+// shared mutable state across goroutines is deps.Log, which is wrapped in a
+// mutex for jobs > 1.
+func SyncMany(ctx context.Context, entries []config.Sync, d config.Defaults, deps Deps, dryRun bool, jobs int) []Result {
+	results := make([]Result, len(entries))
+	if jobs < 1 {
+		jobs = 1
+	}
+
+	runDeps := deps
+	if jobs > 1 {
+		runDeps.Log = &lockedLogger{mu: &sync.Mutex{}, inner: deps.Log}
+	}
+
+	var g errgroup.Group
+	g.SetLimit(jobs)
+	cancelled := 0
+	for i, s := range entries {
 		if ctx.Err() != nil {
-			// The run was cancelled (ctrl+c) or timed out. Stop launching further
-			// entries instead of running them against a dead context, which would
-			// fail preflight immediately and report spurious FAILED results.
-			deps.Log.Errorf("run cancelled; %d entr(ies) skipped", len(entries)-len(results))
-			break
+			// The run was cancelled (ctrl+c) or timed out. Don't launch further
+			// entries against a dead context; mark them Skipped so callers can tell
+			// them apart from real failures.
+			results[i] = Result{Name: s.Name, Skipped: true}
+			cancelled++
+			continue
 		}
-		results = append(results, SyncOne(ctx, s, d, deps, dryRun))
+		i, s := i, s // capture for the goroutine
+		g.Go(func() error {
+			results[i] = SyncOne(ctx, s, d, runDeps, dryRun)
+			return nil
+		})
+	}
+	_ = g.Wait()
+	if cancelled > 0 {
+		deps.Log.Errorf("run cancelled; %d entr(ies) skipped", cancelled)
 	}
 	return results
 }

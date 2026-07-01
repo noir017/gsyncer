@@ -93,7 +93,7 @@ func (m *runModel) start(entries []config.Sync, dryRun bool) tea.Cmd {
 		}
 		deps := syncer.Deps{Runner: m.runner, FSType: m.fsType, Now: m.now, Log: lg,
 			KnownHostsFile: filepath.Join(filepath.Dir(m.cfgPath), "known_hosts")}
-		results := syncer.SyncMany(ctx, entries, m.cfg.Defaults, deps, dryRun)
+		results := syncer.SyncMany(ctx, entries, m.cfg.Defaults, deps, dryRun, m.cfg.Defaults.EffectiveJobs())
 		dur := m.now().Sub(start)
 		line := summarize(results, dur)
 		if rl != nil {
