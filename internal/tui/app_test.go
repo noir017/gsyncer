@@ -16,6 +16,20 @@ func newTestApp(cfg *config.Config, cfgPath string) *App {
 	return newApp(cfgPath, "", cfg, &execx.FakeRunner{}, nonBtrfsFS, nil)
 }
 
+func TestAppSeedsFormSizeOnEdit(t *testing.T) {
+	app := newTestApp(twoEntryCfg(), "x")
+	model, _ := app.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	app = model.(*App)
+	model, _ = app.Update(editEntryMsg{idx: 0})
+	app = model.(*App)
+	if app.screen != screenForm {
+		t.Fatalf("screen = %d, want screenForm", app.screen)
+	}
+	if app.form.width != 100 {
+		t.Fatalf("form was not seeded with the current size, width = %d", app.form.width)
+	}
+}
+
 func TestAppEditMsgRoutesToForm(t *testing.T) {
 	app := newTestApp(twoEntryCfg(), "x")
 	model, _ := app.Update(editEntryMsg{idx: 1})
