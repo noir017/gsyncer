@@ -88,6 +88,7 @@ type NotifyConfig struct {
 // Defaults holds project-wide defaults.
 type Defaults struct {
 	SSHPort   int       `toml:"ssh_port"`
+	Bwlimit   int       `toml:"bwlimit"` // rsync --bwlimit in KB/s; 0 = unlimited
 	Retention Retention `toml:"retention"`
 }
 
@@ -102,6 +103,7 @@ type Sync struct {
 	LocalPath     string             `toml:"local_path"`
 	Ignore        []string           `toml:"ignore"`
 	StrictHostKey bool               `toml:"strict_host_key"`
+	Bwlimit       int                `toml:"bwlimit"` // overrides defaults.bwlimit; 0 = inherit
 	Retention     *RetentionOverride `toml:"retention"`
 }
 
@@ -261,6 +263,14 @@ func (c *Config) Validate() error {
 			c.Warnings = append(c.Warnings, fmt.Sprintf("sync %q: %s", s.Name, msg))
 		}
 	}
+	if c.Defaults.Bwlimit < 0 {
+		return fmt.Errorf("defaults: bwlimit must be >= 0")
+	}
+	for _, s := range c.Sync {
+		if s.Bwlimit < 0 {
+			return fmt.Errorf("sync %q: bwlimit must be >= 0", s.Name)
+		}
+	}
 	if err := checkRetention("defaults", c.Defaults.Retention); err != nil {
 		return err
 	}
@@ -292,6 +302,15 @@ func (s Sync) EffectivePort(d Defaults) int {
 		return d.SSHPort
 	}
 	return 22
+}
+
+// EffectiveBwlimit resolves the rsync bandwidth cap (KB/s): entry > defaults.
+// Zero means unlimited.
+func (s Sync) EffectiveBwlimit(d Defaults) int {
+	if s.Bwlimit != 0 {
+		return s.Bwlimit
+	}
+	return d.Bwlimit
 }
 
 // EffectiveRetention merges the entry override over defaults.

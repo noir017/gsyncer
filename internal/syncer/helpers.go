@@ -113,12 +113,17 @@ func ensureTrailingSlash(p string) string {
 // (--protect-args) flag stops the remote shell from a second round of
 // word-splitting/globbing on the remote path, so spaces or shell metacharacters
 // in remote_path are transferred literally instead of being re-interpreted.
-func buildRsyncArgs(s config.Sync, port int, currentPath string, dryRun bool, knownHosts string) []string {
+func buildRsyncArgs(s config.Sync, port int, currentPath string, dryRun bool, knownHosts string, bwlimit int) []string {
 	// stats2 feeds parseStats (Files/Bytes); progress2 emits an aggregate
 	// progress line that RunStream forwards live to the run screen.
 	args := []string{"-a", "-s", "--delete", "--info=stats2,progress2", "--timeout", strconv.Itoa(rsyncIOTimeout)}
 	if dryRun {
 		args = append(args, "-n")
+	}
+	// Throttle transfer rate when configured (KB/s); a plain passthrough to
+	// rsync's own --bwlimit so an unattended pull doesn't saturate a link.
+	if bwlimit > 0 {
+		args = append(args, "--bwlimit", strconv.Itoa(bwlimit))
 	}
 	for _, f := range ignore.ToRsyncFilters(s.Ignore) {
 		args = append(args, "--filter", f)
