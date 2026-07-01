@@ -34,13 +34,19 @@ func selectEntries(all []config.Sync, name, server string) []config.Sync {
 
 // summaryLine formats the one-line run summary.
 func summaryLine(results []syncer.Result, dur time.Duration) string {
-	ok, fail := 0, 0
+	ok, fail, skip := 0, 0, 0
 	for _, r := range results {
-		if r.OK {
+		switch {
+		case r.OK:
 			ok++
-		} else {
+		case r.Skipped:
+			skip++
+		default:
 			fail++
 		}
+	}
+	if skip > 0 {
+		return fmt.Sprintf("成功 %d / 失败 %d / 跳过 %d / 耗时 %.1fs", ok, fail, skip, dur.Seconds())
 	}
 	return fmt.Sprintf("成功 %d / 失败 %d / 耗时 %.1fs", ok, fail, dur.Seconds())
 }
