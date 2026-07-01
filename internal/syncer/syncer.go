@@ -79,6 +79,7 @@ type Result struct {
 	Snapshot string
 	Mode     string
 	Pruned   int
+	Duration time.Duration // wall-clock time spent on this entry
 }
 
 // rsyncPartialWarning reports whether an rsync exit code represents a
@@ -99,8 +100,12 @@ func toPolicy(r config.Retention) retention.Policy {
 
 // SyncOne runs the full pipeline for a single entry. It never panics; failures
 // are reported via Result.Err with res.OK == false.
-func SyncOne(ctx context.Context, s config.Sync, d config.Defaults, deps Deps, dryRun bool) Result {
-	res := Result{Name: s.Name}
+func SyncOne(ctx context.Context, s config.Sync, d config.Defaults, deps Deps, dryRun bool) (res Result) {
+	res = Result{Name: s.Name}
+	// Measure wall-clock per entry so notifications and status can report it.
+	// deps.Now is the injected clock; a fixed test clock yields a zero duration.
+	start := deps.Now()
+	defer func() { res.Duration = deps.Now().Sub(start) }()
 	port := s.EffectivePort(d)
 
 	// Serialize runs sharing this local root so overlapping cron ticks don't

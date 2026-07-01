@@ -17,9 +17,13 @@ type Result struct {
 	Code   int
 }
 
-// Runner executes an external command.
+// Runner executes an external command. RunEnv is like Run but adds extra
+// environment variables (KEY=value) for the child process; it exists so hooks
+// and notification commands can receive per-entry metadata without the caller
+// interpolating it into a shell string.
 type Runner interface {
 	Run(ctx context.Context, name string, args ...string) (Result, error)
+	RunEnv(ctx context.Context, env []string, name string, args ...string) (Result, error)
 }
 
 // StreamRunner is an optional Runner extension that streams a command's stdout
@@ -35,11 +39,18 @@ type StreamRunner interface {
 type Real struct{}
 
 // Run implements Runner.
-func (Real) Run(ctx context.Context, name string, args ...string) (Result, error) {
+func (r Real) Run(ctx context.Context, name string, args ...string) (Result, error) {
+	return r.RunEnv(ctx, nil, name, args...)
+}
+
+// RunEnv implements Runner.
+func (Real) RunEnv(ctx context.Context, env []string, name string, args ...string) (Result, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	// Force the C locale so tool output (notably rsync --stats labels and
 	// number formatting) is stable and parseable regardless of the host locale.
+	// Caller-supplied env comes last so a hook may still override it if needed.
 	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	cmd.Env = append(cmd.Env, env...)
 	var so, se bytes.Buffer
 	cmd.Stdout = &so
 	cmd.Stderr = &se
@@ -117,6 +128,7 @@ func scanLinesCR(data []byte, atEOF bool) (advance int, token []byte, err error)
 type Call struct {
 	Name string
 	Args []string
+	Env  []string // extra env passed via RunEnv (nil for Run)
 }
 
 // FakeRunner is a test double that records calls and returns scripted results.
@@ -126,8 +138,13 @@ type FakeRunner struct {
 }
 
 // Run implements Runner.
-func (f *FakeRunner) Run(_ context.Context, name string, args ...string) (Result, error) {
-	f.Calls = append(f.Calls, Call{Name: name, Args: args})
+func (f *FakeRunner) Run(ctx context.Context, name string, args ...string) (Result, error) {
+	return f.RunEnv(ctx, nil, name, args...)
+}
+
+// RunEnv implements Runner.
+func (f *FakeRunner) RunEnv(_ context.Context, env []string, name string, args ...string) (Result, error) {
+	f.Calls = append(f.Calls, Call{Name: name, Args: args, Env: env})
 	if f.Handler != nil {
 		return f.Handler(name, args)
 	}
