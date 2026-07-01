@@ -34,6 +34,10 @@ type runDoneMsg struct {
 	dur       time.Duration
 }
 
+// tickMsg drives the run screen's spinner + elapsed-time animation while a sync
+// is in progress. It is re-armed each second only while the run is running.
+type tickMsg struct{}
+
 // editEntryMsg asks App to open the form. idx == -1 means a new entry.
 type editEntryMsg struct{ idx int }
 
