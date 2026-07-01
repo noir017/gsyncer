@@ -186,7 +186,7 @@ gsync version                    # 版本号
 
 对每个同步条目，依次执行：
 
-1. **预检**：检查本地 `rsync`、远程 `rsync`（通过 `ssh` 探测）是否可用。
+1. **预检**：检查本地 `rsync` 是否可用（远程 `rsync` 不再单独探测，省一次 ssh 握手；若远程缺失，rsync 自身会以 127/"command not found" 失败并给出安装提示）。
 2. **拉取**：`rsync -a --delete` 把 `user@host:remote_path/` 同步到本地 `local_path/current/`，并应用忽略规则。传输恒带 `--partial`（配合 `--partial-dir=.gsync-partial` 断点续传、半成品不落入 `current/`）与 `--numeric-ids`（按数字保留 uid/gid）；`compress` 开启时附加 `-z`。
 3. **快照**：把 `current/` 快照到 `local_path/snapshots/<时间戳>/`
    - 默认用**硬链接**后端：未改动的文件与上一份共享 inode，几乎不额外占空间；
