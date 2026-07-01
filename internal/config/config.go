@@ -57,6 +57,10 @@ type Config struct {
 	Defaults Defaults  `toml:"defaults"`
 	Log      LogConfig `toml:"log"`
 	Sync     []Sync    `toml:"sync"`
+	// Warnings holds non-fatal issues surfaced at load time (e.g. an
+	// over-permissive identity key). Not persisted: toml:"-" keeps Save from
+	// writing it back into the config file.
+	Warnings []string `toml:"-"`
 }
 
 // Load decodes and validates a config file.
@@ -102,6 +106,19 @@ func Save(path string, c *Config) error {
 	return os.Rename(tmpName, path)
 }
 
+// hasCtrlOrNUL reports whether s contains a NUL or ASCII control character.
+// Such bytes in a path are almost always an injection attempt or corruption:
+// remote_path is handed to a remote shell and local_path drives rsync --delete
+// and prune, so a stray newline or NUL could truncate/redirect either.
+func hasCtrlOrNUL(s string) bool {
+	for _, r := range s {
+		if r == 0 || r < 0x20 || r == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
 // checkRetention returns an error if any retention field is negative.
 func checkRetention(ctx string, r Retention) error {
 	fields := []struct {
@@ -122,7 +139,10 @@ func checkRetention(ctx string, r Retention) error {
 }
 
 // Validate checks required fields, name uniqueness, and identity existence.
+// Non-fatal issues (e.g. an over-permissive identity key) are collected into
+// c.Warnings rather than returned as errors.
 func (c *Config) Validate() error {
+	c.Warnings = nil
 	seen := map[string]bool{}
 	for i, s := range c.Sync {
 		if s.Name == "" {
@@ -143,6 +163,12 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("sync %q: %s is required", s.Name, f.name)
 			}
 		}
+		if hasCtrlOrNUL(s.RemotePath) {
+			return fmt.Errorf("sync %q: remote_path contains a NUL or control character", s.Name)
+		}
+		if hasCtrlOrNUL(s.LocalPath) {
+			return fmt.Errorf("sync %q: local_path contains a NUL or control character", s.Name)
+		}
 		// local_path is the snapshot root that rsync --delete and prune operate
 		// on; a relative or root path here is a foot-gun (deletes into the cwd or
 		// the whole filesystem), so require a real absolute path.
@@ -153,8 +179,17 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("sync %q: local_path must not be the filesystem root", s.Name)
 		}
 		if s.Identity != "" {
-			if _, err := os.Stat(ExpandHome(s.Identity)); err != nil {
+			info, err := os.Stat(ExpandHome(s.Identity))
+			if err != nil {
 				return fmt.Errorf("sync %q: identity not accessible: %w", s.Name, err)
+			}
+			// A private key readable by group/other is a security hole; ssh may
+			// also refuse to use it. Warn at load time rather than let a cron run
+			// fail opaquely later.
+			if perm := info.Mode().Perm(); perm&0o077 != 0 {
+				c.Warnings = append(c.Warnings, fmt.Sprintf(
+					"sync %q: identity %s has group/other permissions (%#o); tighten to 0600",
+					s.Name, ExpandHome(s.Identity), perm))
 			}
 		}
 	}

@@ -64,7 +64,13 @@ func main() {
 }
 
 func loadConfig(cfgFlag string) (*config.Config, error) {
-	return config.Load(resolveConfigPath(cfgFlag, exeDir()))
+	cfg, err := config.Load(resolveConfigPath(cfgFlag, exeDir()))
+	if cfg != nil {
+		for _, w := range cfg.Warnings {
+			fmt.Fprintln(os.Stderr, "warning:", w)
+		}
+	}
+	return cfg, err
 }
 
 func realDeps(log syncer.Logger, knownHosts string) syncer.Deps {
