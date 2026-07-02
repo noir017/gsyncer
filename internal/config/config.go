@@ -193,7 +193,7 @@ func Save(path string, c *Config) error {
 // and prune, so a stray newline or NUL could truncate/redirect either.
 func hasCtrlOrNUL(s string) bool {
 	for _, r := range s {
-		if r == 0 || r < 0x20 || r == 0x7f {
+		if r < 0x20 || r == 0x7f {
 			return true
 		}
 	}

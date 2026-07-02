@@ -14,13 +14,31 @@ type Policy struct {
 	Yearly     int
 }
 
+// sortedDesc returns a newest-first sorted copy of times.
+func sortedDesc(times []time.Time) []time.Time {
+	sorted := append([]time.Time(nil), times...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].After(sorted[j]) })
+	return sorted
+}
+
 // Select returns the snapshots to KEEP, sorted newest-first. The kept set is
 // the union of four layers: the most recent N, plus the newest snapshot in each
 // of the most recent monthly / semiannual / yearly buckets.
 func Select(times []time.Time, p Policy) []time.Time {
-	sorted := append([]time.Time(nil), times...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].After(sorted[j]) })
+	sorted := sortedDesc(times)
+	keep := keepSet(sorted, p)
+	var out []time.Time
+	for _, t := range sorted {
+		if keep[t.UnixNano()] {
+			out = append(out, t)
+		}
+	}
+	return out
+}
 
+// keepSet computes the retained timestamps (as UnixNano keys) for an already
+// newest-first sorted slice. Shared by Select and Partition so both sort once.
+func keepSet(sorted []time.Time, p Policy) map[int64]bool {
 	keep := map[int64]bool{}
 	add := func(t time.Time) { keep[t.UnixNano()] = true }
 
@@ -66,26 +84,17 @@ func Select(times []time.Time, p Policy) []time.Time {
 		add(sorted[0])
 	}
 
-	var out []time.Time
-	for _, t := range sorted {
-		if keep[t.UnixNano()] {
-			out = append(out, t)
-		}
-	}
-	return out
+	return keep
 }
 
 // Partition splits times into keep and delete sets (both newest-first).
 func Partition(times []time.Time, p Policy) (keep, del []time.Time) {
-	keep = Select(times, p)
-	keepSet := map[int64]bool{}
-	for _, t := range keep {
-		keepSet[t.UnixNano()] = true
-	}
-	sorted := append([]time.Time(nil), times...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].After(sorted[j]) })
+	sorted := sortedDesc(times)
+	set := keepSet(sorted, p)
 	for _, t := range sorted {
-		if !keepSet[t.UnixNano()] {
+		if set[t.UnixNano()] {
+			keep = append(keep, t)
+		} else {
 			del = append(del, t)
 		}
 	}

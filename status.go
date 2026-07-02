@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"time"
+
+	"gsyncer/internal/snapshot"
 )
 
 // EntryStatus is the per-entry health derived from on-disk snapshots. It is the
@@ -34,7 +36,7 @@ func computeStatus(name, backend string, times []time.Time, now time.Time, stale
 			newest = t
 		}
 	}
-	st.Latest = newest.Format("2006-01-02_150405")
+	st.Latest = newest.Format(snapshot.TSLayout)
 	age := now.Sub(newest)
 	st.AgeHours = age.Hours()
 	if staleHours > 0 && age > time.Duration(staleHours*float64(time.Hour)) {

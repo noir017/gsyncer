@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -100,13 +101,7 @@ func Cleanup(dir string, keepDays, keepCount int, now time.Time) error {
 		items = append(items, item{filepath.Join(dir, name), t})
 	}
 	// newest first
-	for i := 0; i < len(items); i++ {
-		for j := i + 1; j < len(items); j++ {
-			if items[j].t.After(items[i].t) {
-				items[i], items[j] = items[j], items[i]
-			}
-		}
-	}
+	sort.Slice(items, func(i, j int) bool { return items[i].t.After(items[j].t) })
 	for i, it := range items {
 		del := false
 		if keepCount > 0 && i >= keepCount {
