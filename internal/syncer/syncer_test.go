@@ -363,6 +363,18 @@ func TestSyncOneRemoteRsyncMissing(t *testing.T) {
 	}
 }
 
+// checkLocalRsync must NOT memoize for fake runners: every test scripts its own
+// probe outcome, so each call has to reach the runner. (Only execx.Real is
+// memoized, which this test can't exercise without a hard host dependency.)
+func TestCheckLocalRsyncProbesFakesEveryCall(t *testing.T) {
+	fr := &execx.FakeRunner{}
+	_ = checkLocalRsync(context.Background(), fr)
+	_ = checkLocalRsync(context.Background(), fr)
+	if len(fr.Calls) != 2 {
+		t.Fatalf("fake runner probed %d times, want 2 (no memoization for fakes)", len(fr.Calls))
+	}
+}
+
 // rsync missing locally -> fail, no snapshot.
 func TestSyncOneLocalRsyncMissing(t *testing.T) {
 	s := okEntry(t)

@@ -54,6 +54,28 @@ func runRsync(ctx context.Context, deps Deps, name string, args []string) (execx
 	return sr.RunStream(ctx, onLine, "rsync", args...)
 }
 
+var (
+	rsyncProbeOnce sync.Once
+	rsyncProbeErr  error
+)
+
+// checkLocalRsync runs the local `rsync --version` preflight. For the real
+// runner the result is memoized for the life of the process — whether rsync is
+// installed is a fixed host property, and a parallel SyncMany would otherwise
+// spawn one redundant probe process per entry (mirrors snapshot's memoized
+// btrfs probe). Other Runner implementations (test fakes) are probed every
+// call so each test can script its own outcome.
+func checkLocalRsync(ctx context.Context, r execx.Runner) error {
+	if _, isReal := r.(execx.Real); isReal {
+		rsyncProbeOnce.Do(func() {
+			_, rsyncProbeErr = r.Run(ctx, "rsync", "--version")
+		})
+		return rsyncProbeErr
+	}
+	_, err := r.Run(ctx, "rsync", "--version")
+	return err
+}
+
 // Logger is the subset of logging the syncer needs.
 type Logger interface {
 	Infof(format string, a ...any)
@@ -163,7 +185,7 @@ func SyncOne(ctx context.Context, s config.Sync, d config.Defaults, deps Deps, d
 		}
 	}
 
-	if _, err := deps.Runner.Run(ctx, "rsync", "--version"); err != nil {
+	if err := checkLocalRsync(ctx, deps.Runner); err != nil {
 		deps.Log.Errorf("[%s] local rsync missing: %s", s.Name, installHint())
 		res.Err = err
 		return res
@@ -298,7 +320,6 @@ func SyncMany(ctx context.Context, entries []config.Sync, d config.Defaults, dep
 			cancelled++
 			continue
 		}
-		i, s := i, s // capture for the goroutine
 		g.Go(func() error {
 			results[i] = SyncOne(ctx, s, d, runDeps, dryRun)
 			return nil
