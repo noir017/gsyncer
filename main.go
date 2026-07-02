@@ -29,7 +29,9 @@ func signalCtx() (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 }
 
-const version = "0.1.0"
+// version is the fallback for local builds; release builds override it via
+// `-ldflags "-X main.version=..."` from the git tag (see .github/workflows/release.yml).
+var version = "0.1.0-dev"
 
 func exeDir() string {
 	p, err := os.Executable()

@@ -1,0 +1,83 @@
+# 推送 v* 标签时自动构建多平台二进制并发布 GitHub Release。
+# 用法:
+#   git tag v0.2.0
+#   git push origin v0.2.0
+# 版本号取自标签（去掉 v 前缀），通过 -ldflags -X 注入 main.version。
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # 创建 Release 需要写权限
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests
+        # e2e 包由 `e2e` build tag 保护，默认 go test ./... 会自动跳过
+        run: go test ./...
+
+  release:
+    name: Build & Release
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build binaries
+        env:
+          CGO_ENABLED: "0" # 静态编译，不链接 libc（与 build.sh 保持一致）
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+
+          # 目标平台列表: GOOS/GOARCH
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            GOOS="${target%/*}"
+            GOARCH="${target#*/}"
+            EXT=""
+            [ "$GOOS" = "windows" ] && EXT=".exe"
+            OUT="dist/gsyncer_${VERSION}_${GOOS}_${GOARCH}"
+
+            echo "==> 构建 $GOOS/$GOARCH"
+            GOOS="$GOOS" GOARCH="$GOARCH" \
+              go build -trimpath \
+                -ldflags "-s -w -X main.version=${VERSION}" \
+                -o "${OUT}/gsyncer${EXT}" .
+
+            cp LICENSE README.md "$OUT/"
+
+            # linux/darwin 打 tar.gz，windows 打 zip
+            if [ "$GOOS" = "windows" ]; then
+              (cd dist && zip -qr "$(basename "$OUT").zip" "$(basename "$OUT")")
+            else
+              tar -czf "${OUT}.tar.gz" -C dist "$(basename "$OUT")"
+            fi
+            rm -rf "$OUT"
+          done
+
+          # 生成校验和文件
+          (cd dist && sha256sum ./* > checksums.txt)
+          ls -lh dist/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true # 从合并的 PR / commit 自动生成更新日志
