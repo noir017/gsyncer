@@ -186,19 +186,23 @@ func (a *App) deleteEntry(idx int) {
 func (a *App) helpLine() string {
 	switch a.screen {
 	case screenList:
-		return "↑/↓ 选择  enter 快照  a 新增  c 复制  e 编辑  d 删除  s 同步  S 全部  r 刷新  ? 帮助  q 退出"
+		return helpKeys(
+			"↑/↓", "选择", "enter", "快照", "a", "新增", "c", "复制", "e", "编辑",
+			"d", "删除", "s", "同步", "S", "全部", "r", "刷新", "?", "帮助", "q", "退出")
 	case screenForm:
-		return "tab/↓ 下一项  shift+tab/↑ 上一项  空格 切换 strict  enter 解析粘贴  ctrl+s 保存  esc 取消"
+		return helpKeys(
+			"tab/↓", "下一项", "shift+tab/↑", "上一项", "空格", "切换 strict",
+			"enter", "解析粘贴", "ctrl+s", "保存", "esc", "取消")
 	case screenRun:
 		if a.run.cancelling {
-			return "(取消中) ctrl+c 退出"
+			return styleWarn.Render("取消中… ") + helpKeys("ctrl+c", "退出")
 		}
 		if a.run.running {
-			return "(运行中) ctrl+c 中断"
+			return helpKeys("↑/↓", "滚动", "ctrl+c", "中断")
 		}
-		return "(完成) enter/esc 返回，ctrl+c 退出"
+		return helpKeys("enter/esc", "返回", "ctrl+c", "退出")
 	case screenSnaps:
-		return "↑/↓ 选择  d 删除  p 按策略清理  x 恢复  esc 返回"
+		return helpKeys("↑/↓", "选择", "d", "删除", "p", "按策略清理", "x", "恢复", "esc", "返回")
 	}
 	return ""
 }
@@ -218,15 +222,15 @@ func (a *App) View() string {
 	var b strings.Builder
 	b.WriteString(body)
 	if a.confirmDelete {
-		b.WriteString("\n" + styleErr.Render("删除选中条目？(y/N)"))
+		b.WriteString("\n" + styleConfirm.Render("删除选中条目？(y/N)"))
 	} else if a.confirmQuit {
-		b.WriteString("\n" + styleErr.Render("退出 gsyncer？(Y/n)"))
+		b.WriteString("\n" + styleConfirm.Render("退出 gsyncer？(Y/n)"))
 	} else if a.status != "" {
-		st := styleStatus
 		if a.statusErr {
-			st = styleErr
+			b.WriteString("\n" + styleErr.Render("✘ "+a.status))
+		} else {
+			b.WriteString("\n" + styleStatus.Render("✔ "+a.status))
 		}
-		b.WriteString("\n" + st.Render(a.status))
 	}
 	if a.helpVisible {
 		b.WriteString("\n" + styleHelp.Render(a.helpLine()))

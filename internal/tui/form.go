@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"gsyncer/internal/config"
 )
@@ -49,8 +50,9 @@ type formModel struct {
 	strict bool
 	focus  int
 
-	initial map[string]string // snapshot for dirty detection
-	status  string
+	initial   map[string]string // snapshot for dirty detection
+	status    string
+	statusErr bool // status is an error (red) rather than informational (green)
 
 	// discard-confirm state
 	confirming bool
@@ -70,9 +72,13 @@ func newForm(cfg *config.Config, cfgPath string, origIdx int) formModel {
 	m.ignore.SetWidth(40)
 	m.ignore.SetHeight(6)
 	m.ret = make([]textinput.Model, 4)
-	for i := range m.ret {
+	// An empty field inherits defaults.retention (see EffectiveRetention), so
+	// surface those numbers as placeholders instead of a blank box.
+	def := cfg.Defaults.Retention
+	for i, n := range []int{def.Recent, def.Monthly, def.Semiannual, def.Yearly} {
 		ti := textinput.New()
 		ti.CharLimit = 6
+		ti.Placeholder = strconv.Itoa(n)
 		m.ret[i] = ti
 	}
 	m.paste = textinput.New()
@@ -256,14 +262,14 @@ func parsePaste(s string) map[int]string {
 func (m *formModel) applyPaste() {
 	fields := parsePaste(m.paste.Value())
 	if len(fields) == 0 {
-		m.status = "粘贴解析: 未识别任何字段"
+		m.status, m.statusErr = "粘贴解析: 未识别任何字段", true
 		return
 	}
 	for idx, v := range fields {
 		m.inputs[idx].SetValue(v)
 	}
 	m.paste.SetValue("")
-	m.status = fmt.Sprintf("粘贴解析: 已填充 %d 个字段", len(fields))
+	m.status, m.statusErr = fmt.Sprintf("粘贴解析: 已填充 %d 个字段", len(fields)), false
 }
 
 func setIntPtr(ti *textinput.Model, p *int) {
@@ -362,7 +368,7 @@ func (m formModel) toSync() (config.Sync, error) {
 func (m *formModel) save() tea.Cmd {
 	s, err := m.toSync()
 	if err != nil {
-		m.status = err.Error()
+		m.status, m.statusErr = err.Error(), true
 		return nil
 	}
 	cand := *m.cfg
@@ -373,11 +379,11 @@ func (m *formModel) save() tea.Cmd {
 		cand.Sync = append(cand.Sync, s)
 	}
 	if err := cand.Validate(); err != nil {
-		m.status = err.Error()
+		m.status, m.statusErr = err.Error(), true
 		return nil
 	}
 	if err := config.Save(m.cfgPath, &cand); err != nil {
-		m.status = "保存失败: " + err.Error()
+		m.status, m.statusErr = "保存失败: "+err.Error(), true
 		return nil
 	}
 	*m.cfg = cand
@@ -388,30 +394,29 @@ func (m *formModel) save() tea.Cmd {
 }
 
 func (m *formModel) applyFocus() {
-	for i := range m.inputs {
-		if i == m.focus {
-			m.inputs[i].Focus()
+	// setFocus toggles focus and colors the "> " prompt so the active control
+	// stands out even when its label is off-screen.
+	setFocus := func(ti *textinput.Model, on bool) {
+		if on {
+			ti.Focus()
+			ti.PromptStyle = styleLabelOn
 		} else {
-			m.inputs[i].Blur()
+			ti.Blur()
+			ti.PromptStyle = styleHelp
 		}
 	}
+	for i := range m.inputs {
+		setFocus(&m.inputs[i], i == m.focus)
+	}
 	for i := range m.ret {
-		if focusRet0+i == m.focus {
-			m.ret[i].Focus()
-		} else {
-			m.ret[i].Blur()
-		}
+		setFocus(&m.ret[i], focusRet0+i == m.focus)
 	}
 	if m.focus == focusIgnore {
 		m.ignore.Focus()
 	} else {
 		m.ignore.Blur()
 	}
-	if m.focus == focusPaste {
-		m.paste.Focus()
-	} else {
-		m.paste.Blur()
-	}
+	setFocus(&m.paste, m.focus == focusPaste)
 }
 
 // applySize fits the text controls to the current terminal width/height. Labels
@@ -429,7 +434,14 @@ func (m *formModel) applySize() {
 	m.paste.Width = inW
 	m.ignore.SetWidth(clampMin(m.width-4, 20))
 	if m.height > 0 {
-		m.ignore.SetHeight(clampMin(m.height-16, 3))
+		// Fixed rows around the ignore box: title block (2), 7 inputs, strict,
+		// ignore header, retention, status (2), App footer (2) — plus the
+		// 3-line quick-paste block on new-entry forms.
+		reserve := 16
+		if m.origIdx < 0 {
+			reserve += 3
+		}
+		m.ignore.SetHeight(clampMin(m.height-reserve, 3))
 	}
 }
 
@@ -526,33 +538,57 @@ func (m formModel) Update(msg tea.Msg) (formModel, tea.Cmd) {
 	return m, cmd
 }
 
+// fieldLabel renders a fixed-width row label. Padding is computed from display
+// width (CJK labels are wider in bytes than in columns, so %-10s alignment
+// drifts) and the focused row gets a marker plus the accent color.
+func fieldLabel(text string, focused bool) string {
+	const w = 10
+	if pad := w - lipgloss.Width(text); pad > 0 {
+		text += strings.Repeat(" ", pad)
+	}
+	if focused {
+		return styleLabelOn.Render("▸ "+text) + " "
+	}
+	return styleHelp.Render("  "+text) + " "
+}
+
 func (m formModel) View() string {
 	var b strings.Builder
 	title := "新增条目"
 	if m.origIdx >= 0 {
-		title = "编辑条目: " + m.cfg.Sync[m.origIdx].Name
+		title = "编辑条目 · " + m.cfg.Sync[m.origIdx].Name
 	}
-	b.WriteString(styleTitle.Render(title) + "\n\n")
+	b.WriteString(styleTitleChip.Render("gsyncer") + " " + styleTitle.Render(title) + "\n")
+	b.WriteString(rule(m.width) + "\n")
 	if m.origIdx < 0 {
-		b.WriteString(fmt.Sprintf("%-10s %s\n", "快速粘贴", m.paste.View()))
+		b.WriteString(fieldLabel("快速粘贴", m.focus == focusPaste) + m.paste.View() + "\n")
 		b.WriteString(styleHelp.Render("  ↑ 在此粘贴连接串后按 enter 自动解析填充") + "\n\n")
 	}
 	labels := []string{"名称", "主机", "端口", "用户", "密钥", "远程路径", "本地路径"}
 	for i := range m.inputs {
-		b.WriteString(fmt.Sprintf("%-10s %s\n", labels[i], m.inputs[i].View()))
+		b.WriteString(fieldLabel(labels[i], m.focus == i) + m.inputs[i].View() + "\n")
 	}
-	strictMark := "[ ]"
+	strictMark := styleHelp.Render("[ ]")
 	if m.strict {
-		strictMark = "[x]"
+		strictMark = styleLabelOn.Render("[x]")
 	}
-	b.WriteString(fmt.Sprintf("%-10s %s 严格检查 host key\n", "strict", strictMark))
-	b.WriteString("忽略规则 (gitignore 风格, 每行一条):\n" + m.ignore.View() + "\n")
-	b.WriteString(fmt.Sprintf("保留覆盖 recent[%s] monthly[%s] semi[%s] yearly[%s]\n",
-		m.ret[0].View(), m.ret[1].View(), m.ret[2].View(), m.ret[3].View()))
+	b.WriteString(fieldLabel("strict", m.focus == focusStrict) + strictMark +
+		" 严格检查 host key " + styleHelp.Render("(空格切换)") + "\n")
+	b.WriteString(fieldLabel("忽略规则", m.focus == focusIgnore) +
+		styleHelp.Render("gitignore 风格, 每行一条") + "\n" + m.ignore.View() + "\n")
+	retFocus := m.focus >= focusRet0 && m.focus < focusRet0+4
+	b.WriteString(fieldLabel("保留覆盖", retFocus) +
+		fmt.Sprintf("recent[%s] monthly[%s] semi[%s] yearly[%s] %s\n",
+			m.ret[0].View(), m.ret[1].View(), m.ret[2].View(), m.ret[3].View(),
+			styleHelp.Render("留空=默认")))
 	if m.confirming {
-		b.WriteString("\n" + styleErr.Render("放弃未保存的改动？(y/N)"))
+		b.WriteString("\n" + styleConfirm.Render("放弃未保存的改动？(y/N)"))
 	} else if m.status != "" {
-		b.WriteString("\n" + styleErr.Render(m.status))
+		if m.statusErr {
+			b.WriteString("\n" + styleErr.Render("✘ "+m.status))
+		} else {
+			b.WriteString("\n" + styleStatus.Render("✔ "+m.status))
+		}
 	}
 	return b.String()
 }

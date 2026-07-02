@@ -35,9 +35,10 @@ func TestSnapsResizesTable(t *testing.T) {
 	if m.tbl.Width() != 116 {
 		t.Fatalf("tbl.Width() = %d, want 116", m.tbl.Width())
 	}
-	// SetHeight(30) sets viewport.Height = 30 - 1 (header row), so Height() returns 29.
-	if m.tbl.Height() != 29 {
-		t.Fatalf("tbl.Height() = %d, want 29 (SetHeight(30) minus 1 header line)", m.tbl.Height())
+	// SetHeight(30) sets viewport.Height = 30 - 2 (header row + its bottom
+	// border), so Height() returns 28.
+	if m.tbl.Height() != 28 {
+		t.Fatalf("tbl.Height() = %d, want 28 (SetHeight(30) minus 2 header lines)", m.tbl.Height())
 	}
 }
 

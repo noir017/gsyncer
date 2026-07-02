@@ -67,6 +67,69 @@ func TestListTruncatesLongRows(t *testing.T) {
 	}
 }
 
+func TestShrinkMiddle(t *testing.T) {
+	cases := []struct {
+		in   string
+		w    int
+		want string
+	}{
+		{"abcdef", 0, "abcdef"},  // w<=0: no limit
+		{"abcdef", 10, "abcdef"}, // already fits
+		{"abcdef", 1, "…"},
+		{"abcdefghij", 5, "ab…ij"},
+		{"abcdefghij", 6, "abc…ij"}, // head gets the extra column
+	}
+	for _, tc := range cases {
+		if got := shrinkMiddle(tc.in, tc.w); got != tc.want {
+			t.Errorf("shrinkMiddle(%q, %d) = %q, want %q", tc.in, tc.w, got, tc.want)
+		}
+		if tc.w > 0 && lipgloss.Width(shrinkMiddle(tc.in, tc.w)) > tc.w {
+			t.Errorf("shrinkMiddle(%q, %d) exceeds width", tc.in, tc.w)
+		}
+	}
+}
+
+func TestFitTwoDonatesSurplus(t *testing.T) {
+	// a fits well under half the budget: b should get all the leftover space.
+	a, b := fitTwo("ab", "0123456789", 10)
+	if a != "ab" {
+		t.Fatalf("short side must be untouched, got %q", a)
+	}
+	if w := lipgloss.Width(b); w > 8 {
+		t.Fatalf("long side must shrink to the remainder (8), got %q (%d)", b, w)
+	}
+}
+
+func TestListKeepsMetaAndPathEndsWhenNarrow(t *testing.T) {
+	cfg := &config.Config{Sync: []config.Sync{{
+		Name: "openwrt-backups", Host: "192.168.0.10", User: "root",
+		RemotePath: "/mnt/sata2-4/backups",
+		LocalPath:  "/mnt/disk2/volume16t/sync/backup/linux/openwrt/backups",
+	}}}
+	m := newList(cfg, &execx.FakeRunner{}, nonBtrfsFS)
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
+	v := m.View()
+	var row string
+	for _, ln := range strings.Split(v, "\n") {
+		if strings.Contains(ln, "openwrt-backups") {
+			row = ln
+			break
+		}
+	}
+	if row == "" {
+		t.Fatalf("entry row not rendered:\n%s", v)
+	}
+	if w := lipgloss.Width(row); w > 80 {
+		t.Fatalf("row exceeds width 80 (%d): %q", w, row)
+	}
+	// The meta and both path tails must survive the shrink.
+	for _, want := range []string{"snaps", "hardlink", "root@", "backups → ", "→ /mnt"} {
+		if !strings.Contains(row, want) {
+			t.Fatalf("narrow row must keep %q, got: %q", want, row)
+		}
+	}
+}
+
 func TestListNoClampWhenSizeUnknown(t *testing.T) {
 	// Before any WindowSizeMsg, width/height are 0 → render every row, no cut.
 	m := newList(manyEntryCfg(20), &execx.FakeRunner{}, nonBtrfsFS)

@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"gsyncer/internal/config"
 	"gsyncer/internal/execx"
@@ -31,6 +32,7 @@ type snapsModel struct {
 	runner   execx.Runner
 	fsType   snapshot.FSTypeFunc
 
+	width   int
 	tbl     table.Model
 	times   []time.Time
 	sizes   map[string]string // ts string -> humanized nominal size ("" = pending)
@@ -60,6 +62,11 @@ func newSnaps(entry config.Sync, defaults config.Defaults, runner execx.Runner, 
 		{Title: "时间", Width: 22},
 		{Title: "名义大小", Width: 12},
 	}), table.WithFocused(true))
+	ts := table.DefaultStyles()
+	ts.Header = ts.Header.Bold(true).Foreground(colAccent).
+		BorderStyle(lipgloss.NormalBorder()).BorderForeground(colDim).BorderBottom(true)
+	ts.Selected = ts.Selected.Bold(true).Foreground(colOnDark).Background(colAccent)
+	t.SetStyles(ts)
 	m := snapsModel{entry: entry, defaults: defaults, runner: runner, fsType: fsType,
 		tbl: t, sizes: map[string]string{}, epoch: 1}
 	m.restoreInput = textinput.New()
@@ -176,6 +183,7 @@ func (m snapsModel) snapPath(i int) string {
 func (m snapsModel) Update(msg tea.Msg) (snapsModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		m.width = msg.Width
 		m.tbl.SetWidth(clampMin(msg.Width-4, 20))
 		m.tbl.SetHeight(clampMin(msg.Height-10, 3))
 		return m, nil
@@ -333,19 +341,25 @@ func (m snapsModel) Update(msg tea.Msg) (snapsModel, tea.Cmd) {
 
 func (m snapsModel) View() string {
 	var b strings.Builder
-	b.WriteString(styleTitle.Render("快照: "+m.entry.Name) +
-		styleHelp.Render("   后端: "+m.backend) + "\n\n")
+	b.WriteString(styleTitleChip.Render("快照") + " " + styleTitle.Render(m.entry.Name) +
+		styleHelp.Render(fmt.Sprintf("  %d 份 · 后端 %s", len(m.times), m.backend)) + "\n")
+	b.WriteString(rule(m.width) + "\n")
 	b.WriteString(m.tbl.View() + "\n")
 	if m.restoring {
-		b.WriteString("\n恢复到: " + m.restoreInput.View() + styleHelp.Render("  (enter 确认, esc 取消)"))
+		b.WriteString("\n" + styleLabelOn.Render("恢复到:") + " " + m.restoreInput.View() +
+			styleHelp.Render("  (enter 确认, esc 取消)"))
 	} else if m.confirmPrune {
-		b.WriteString("\n" + styleErr.Render(fmt.Sprintf("将删除 %d 份，确认？(y/N)", m.pendingPruneN)))
+		b.WriteString("\n" + styleConfirm.Render(fmt.Sprintf("将删除 %d 份，确认？(y/N)", m.pendingPruneN)))
 	} else if m.confirmOverwrite {
-		b.WriteString("\n" + styleErr.Render("目标已存在，覆盖？(y/N)"))
+		b.WriteString("\n" + styleConfirm.Render("目标已存在，覆盖？(y/N)"))
 	} else if m.confirmDelete {
-		b.WriteString("\n" + styleErr.Render("删除该快照？(y/N)"))
+		b.WriteString("\n" + styleConfirm.Render("删除该快照？(y/N)"))
 	} else if m.status != "" {
-		b.WriteString("\n" + styleStatus.Render(m.status))
+		st := styleStatus
+		if strings.Contains(m.status, "失败") {
+			st = styleErr
+		}
+		b.WriteString("\n" + st.Render(m.status))
 	}
 	return b.String()
 }

@@ -199,50 +199,150 @@ func truncateWidth(s string, w int) string {
 	return string(r) + "…"
 }
 
+// shrinkMiddle shortens s to at most w display columns by replacing the middle
+// with an ellipsis, keeping both ends visible: a path's head and its last
+// components carry the information, the middle matters least. w<=0 returns s
+// unchanged, matching truncateWidth. Only for plain (unstyled) strings.
+func shrinkMiddle(s string, w int) string {
+	if w <= 0 || lipgloss.Width(s) <= w {
+		return s
+	}
+	if w == 1 {
+		return "…"
+	}
+	r := []rune(s)
+	headW := w / 2 // head gets the extra column when w-1 is odd
+	i, cw := 0, 0
+	for i < len(r) {
+		rw := lipgloss.Width(string(r[i]))
+		if cw+rw > headW {
+			break
+		}
+		cw += rw
+		i++
+	}
+	tailW := w - 1 - cw
+	j, tw := len(r), 0
+	for j > i {
+		rw := lipgloss.Width(string(r[j-1]))
+		if tw+rw > tailW {
+			break
+		}
+		tw += rw
+		j--
+	}
+	return string(r[:i]) + "…" + string(r[j:])
+}
+
+// fitTwo shrinks a and b so together they fit within budget columns, splitting
+// the space evenly but letting a side that already fits donate its surplus to
+// the other.
+func fitTwo(a, b string, budget int) (string, string) {
+	wa, wb := lipgloss.Width(a), lipgloss.Width(b)
+	if wa+wb <= budget {
+		return a, b
+	}
+	half := budget / 2
+	switch {
+	case wa <= half:
+		return a, shrinkMiddle(b, budget-wa)
+	case wb <= budget-half:
+		return shrinkMiddle(a, budget-wb), b
+	default:
+		return shrinkMiddle(a, half), shrinkMiddle(b, budget-half)
+	}
+}
+
+// renderRow renders one entry row. The selected row carries a background
+// highlight, so every segment (including plain spaces and padding) must be
+// rendered through a style that sets that background — a raw segment would
+// punch a hole in the highlight.
+func (m listModel) renderRow(i int, s config.Sync) string {
+	selected := i == m.cursor
+	seg := lipgloss.NewStyle() // plain text segments
+	dim := styleHelp           // secondary text (arrow, meta)
+	nameStyle := seg           // entry name
+	cursorTxt := "  "
+	if selected {
+		seg = seg.Background(colSelBg)
+		dim = dim.Background(colSelBg)
+		nameStyle = styleLabelOn.Background(colSelBg)
+		cursorTxt = "▶ "
+	}
+	dot := styleDotNever
+	switch m.lastRun[s.Name] {
+	case runOK:
+		dot = styleDotOK
+	case runFail:
+		dot = styleDotFail
+	}
+	if selected {
+		dot = dot.Background(colSelBg)
+	}
+	// Flag entries with a non-fatal issue (e.g. an inaccessible identity) so
+	// they stand out instead of silently blocking a run later.
+	mark := seg.Render(" ")
+	name := fmt.Sprintf("%-12s", s.Name)
+	if _, bad := m.warn[s.Name]; bad {
+		warnStyle := styleWarn
+		if selected {
+			warnStyle = warnStyle.Background(colSelBg)
+		}
+		mark = warnStyle.Render("⚠")
+		name = warnStyle.Render(name)
+	} else {
+		name = nameStyle.Render(name)
+	}
+	head := nameStyle.Render(cursorTxt) + dot.String() + mark + seg.Render(" ") + name + seg.Render(" ")
+
+	// The three tail pieces are fitted as plain text first, then styled, so the
+	// width math never has to slice through an escape sequence.
+	remote := fmt.Sprintf("%s@%s:%s", s.User, s.Host, s.RemotePath)
+	local := s.LocalPath
+	meta := fmt.Sprintf("  %d snaps  %s", m.counts[s.LocalPath], m.backends[s.LocalPath])
+	plainTail := remote + " → " + local + meta
+	var tail string
+	switch avail := m.width - lipgloss.Width(head); {
+	case m.width > 0 && avail <= 0:
+		tail = ""
+	case m.width > 0 && lipgloss.Width(plainTail) > avail:
+		// Too narrow: keep the short meta (snap count, backend) intact and
+		// shrink the two paths from the middle so both their ends stay
+		// readable; if even that leaves no room for paths, fall back to plain
+		// end-truncation of the whole tail.
+		budget := avail - lipgloss.Width(meta) - lipgloss.Width(" → ")
+		if budget >= 8 {
+			r2, l2 := fitTwo(remote, local, budget)
+			tail = seg.Render(r2) + dim.Render(" → ") + seg.Render(l2) + dim.Render(meta)
+		} else {
+			tail = seg.Render(truncateWidth(plainTail, avail))
+		}
+	default:
+		tail = seg.Render(remote) + dim.Render(" → ") + seg.Render(local) + dim.Render(meta)
+	}
+	row := head + tail
+	// Extend the selected row's highlight to the full terminal width.
+	if selected && m.width > 0 {
+		if pad := m.width - lipgloss.Width(row); pad > 0 {
+			row += seg.Render(strings.Repeat(" ", pad))
+		}
+	}
+	return row
+}
+
 func (m listModel) View() string {
 	var b strings.Builder
-	b.WriteString(styleTitle.Render("gsyncer — 文件同步") + "\n\n")
+	b.WriteString(styleTitleChip.Render("gsyncer") +
+		styleHelp.Render(fmt.Sprintf("  文件同步 · %d 条目", len(m.cfg.Sync))) + "\n")
+	b.WriteString(rule(m.width) + "\n")
 	if len(m.cfg.Sync) == 0 {
-		b.WriteString(styleHelp.Render("（无条目）按 a 新增第一个条目\n"))
+		b.WriteString(styleHelp.Render("（无条目）按 ") + styleHelpKey.Render("a") +
+			styleHelp.Render(" 新增第一个条目") + "\n")
 		return b.String()
 	}
 	rows := make([]string, len(m.cfg.Sync))
 	for i, s := range m.cfg.Sync {
-		dot := styleDotNever.String()
-		switch m.lastRun[s.Name] {
-		case runOK:
-			dot = styleDotOK.String()
-		case runFail:
-			dot = styleDotFail.String()
-		}
-		cursor := "  "
-		if i == m.cursor {
-			cursor = "▶ "
-		}
-		// Flag entries with a non-fatal issue (e.g. an inaccessible identity) so
-		// they stand out instead of silently blocking a run later. All ANSI lives
-		// in the head (dot, mark, styled name); the tail is plain, so truncating
-		// the tail never splits an escape sequence.
-		mark := " "
-		name := fmt.Sprintf("%-12s", s.Name)
-		if _, bad := m.warn[s.Name]; bad {
-			mark = styleWarn.Render("⚠")
-			name = styleWarn.Render(name)
-		}
-		head := fmt.Sprintf("%s%s%s %s ", cursor, dot, mark, name)
-		tail := fmt.Sprintf("%s@%s:%s → %s  %d snaps  %s",
-			s.User, s.Host, s.RemotePath, s.LocalPath,
-			m.counts[s.LocalPath], m.backends[s.LocalPath])
-		if m.width > 0 {
-			avail := m.width - lipgloss.Width(head)
-			switch {
-			case avail <= 0:
-				tail = ""
-			case lipgloss.Width(tail) > avail:
-				tail = truncateWidth(tail, avail)
-			}
-		}
-		rows[i] = head + tail
+		rows[i] = m.renderRow(i, s)
 	}
 	start, end := m.windowRange(len(rows))
 	for i := start; i < end; i++ {

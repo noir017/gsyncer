@@ -57,6 +57,23 @@ func TestFormToSyncRetentionPointers(t *testing.T) {
 	}
 }
 
+func TestFormShowsDefaultRetentionAsPlaceholder(t *testing.T) {
+	cfg := baseCfg()
+	cfg.Defaults.Retention = config.Retention{Recent: 7, Monthly: 6, Semiannual: 2, Yearly: 2}
+	m := newForm(cfg, "x", 0) // entry 0 has no retention override
+	for i, want := range []string{"7", "6", "2", "2"} {
+		if got := m.ret[i].Placeholder; got != want {
+			t.Fatalf("ret[%d] placeholder = %q, want %q", i, got, want)
+		}
+		if v := m.ret[i].Value(); v != "" {
+			t.Fatalf("ret[%d] must stay empty (inherit default), got %q", i, v)
+		}
+	}
+	if v := m.View(); !strings.Contains(v, "留空=默认") {
+		t.Fatalf("View must hint that empty means default:\n%s", v)
+	}
+}
+
 func TestFormToSyncNoOverride(t *testing.T) {
 	m := newForm(baseCfg(), "x", 0)
 	s, err := m.toSync()

@@ -162,7 +162,11 @@ func (m runModel) Update(msg tea.Msg) (runModel, tea.Cmd) {
 		// scrolled up to read, leave their position alone. Sample AtBottom()
 		// BEFORE SetContent, since adding a line shifts what counts as bottom.
 		atBottom := m.vp.AtBottom()
-		m.lines = append(m.lines, msg.text)
+		line := msg.text
+		if msg.level == "ERROR" {
+			line = styleErr.Render(line)
+		}
+		m.lines = append(m.lines, line)
 		m.refreshContent()
 		if atBottom {
 			m.vp.GotoBottom()
@@ -173,9 +177,11 @@ func (m runModel) Update(msg tea.Msg) (runModel, tea.Cmd) {
 		m.running = false
 		m.cancelling = false
 		m.results = msg.results
-		summary := "✔ " + summarize(msg.results, msg.dur)
+		m.title = fmt.Sprintf("同步完成: %d 条", len(msg.results))
+		summary := styleStatus.Render("✔ " + summarize(msg.results, msg.dur))
 		if msg.cancelled {
-			summary = "⚠ 已取消 — " + summarize(msg.results, msg.dur)
+			m.title = "同步已取消"
+			summary = styleWarn.Render("⚠ 已取消 — " + summarize(msg.results, msg.dur))
 		}
 		m.lines = append(m.lines, summary)
 		m.refreshContent()
@@ -216,12 +222,15 @@ func (m runModel) Update(msg tea.Msg) (runModel, tea.Cmd) {
 
 func (m runModel) View() string {
 	var b strings.Builder
-	title := m.title
+	var title string
 	if m.running {
-		frame := spinnerFrames[m.spinner%len(spinnerFrames)]
-		title = fmt.Sprintf("%s %s · 已用时 %s", frame, m.title, fmtElapsed(m.now().Sub(m.startedAt)))
+		title = styleHelpKey.Render(spinnerFrames[m.spinner%len(spinnerFrames)]) + " " +
+			styleTitle.Render(m.title) +
+			styleHelp.Render(" · 已用时 "+fmtElapsed(m.now().Sub(m.startedAt)))
+	} else {
+		title = styleTitleChip.Render("gsyncer") + " " + styleTitle.Render(m.title)
 	}
-	b.WriteString(styleTitle.Render(title) + "\n\n")
+	b.WriteString(title + "\n\n")
 	b.WriteString(styleBox.Render(m.vp.View()) + "\n")
 	return b.String()
 }
