@@ -38,6 +38,23 @@ func selectEntries(all []config.Sync, name, server string) []config.Sync {
 	return out
 }
 
+// checkSelection returns an error when an explicit -name/-server filter matched
+// no entries. Running with zero entries because a filter was misspelled must not
+// look like success (exit 0, "成功 0"), or a cron job silently stops backing up.
+// An empty selection without filters (no entries configured) stays allowed.
+func checkSelection(entries []config.Sync, name, server string) error {
+	if len(entries) > 0 || (name == "" && server == "") {
+		return nil
+	}
+	if name != "" && server != "" {
+		return fmt.Errorf("no entries match -name %q -server %q", name, server)
+	}
+	if name != "" {
+		return fmt.Errorf("no entry named %q", name)
+	}
+	return fmt.Errorf("no entries on server %q", server)
+}
+
 // summaryLine formats the one-line run summary.
 func summaryLine(results []syncer.Result, dur time.Duration) string {
 	ok, fail, skip := 0, 0, 0

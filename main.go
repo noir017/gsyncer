@@ -157,6 +157,13 @@ func cmdSync(argv []string) int {
 		fmt.Fprintln(os.Stderr, "config:", err)
 		return 1
 	}
+	entries := selectEntries(cfg.Sync, *name, *server)
+	// A filter that matches nothing is almost always a typo; in cron that typo
+	// would otherwise report "成功 0" with exit 0 and silently never back up.
+	if err := checkSelection(entries, *name, *server); err != nil {
+		fmt.Fprintln(os.Stderr, "sync:", err)
+		return 1
+	}
 	logDir := filepath.Join(exeDir(), "logs")
 	start := time.Now()
 	rl, err := logx.NewRunLogger(logDir, start)
@@ -168,7 +175,6 @@ func cmdSync(argv []string) int {
 
 	ctx, stop := signalCtx()
 	defer stop()
-	entries := selectEntries(cfg.Sync, *name, *server)
 	n := *jobs
 	if n <= 0 {
 		n = cfg.Defaults.EffectiveJobs()
@@ -373,6 +379,12 @@ func cmdPrune(argv []string) int {
 		fmt.Fprintln(os.Stderr, "config:", err)
 		return 1
 	}
+	entries := selectEntries(cfg.Sync, *name, "")
+	// Same typo guard as cmdSync: a -name that matches nothing must not exit 0.
+	if err := checkSelection(entries, *name, ""); err != nil {
+		fmt.Fprintln(os.Stderr, "prune:", err)
+		return 1
+	}
 	logDir := filepath.Join(exeDir(), "logs")
 	start := time.Now()
 	rl, err := logx.NewRunLogger(logDir, start)
@@ -384,7 +396,6 @@ func cmdPrune(argv []string) int {
 
 	ctx, stop := signalCtx()
 	defer stop()
-	entries := selectEntries(cfg.Sync, *name, "")
 	var results []syncer.Result
 	for _, s := range entries {
 		if ctx.Err() != nil {

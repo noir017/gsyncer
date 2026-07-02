@@ -76,6 +76,29 @@ func TestSelectEntries(t *testing.T) {
 	}
 }
 
+func TestCheckSelection(t *testing.T) {
+	one := []config.Sync{{Name: "a", Host: "h1"}}
+	cases := []struct {
+		entries      []config.Sync
+		name, server string
+		wantErr      bool
+	}{
+		{one, "", "", false},      // no filter, has entries
+		{nil, "", "", false},      // no filter, empty config is fine
+		{one, "a", "", false},     // filter matched
+		{nil, "typo", "", true},   // -name matched nothing
+		{nil, "", "typo", true},   // -server matched nothing
+		{nil, "typo", "h9", true}, // both filters matched nothing
+	}
+	for _, c := range cases {
+		err := checkSelection(c.entries, c.name, c.server)
+		if (err != nil) != c.wantErr {
+			t.Errorf("checkSelection(%d entries, %q, %q) err = %v, wantErr %v",
+				len(c.entries), c.name, c.server, err, c.wantErr)
+		}
+	}
+}
+
 func TestSummaryLine(t *testing.T) {
 	res := []syncer.Result{
 		{Name: "a", OK: true},

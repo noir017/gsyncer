@@ -44,6 +44,28 @@ func TestCmdRestoreRequiresFlags(t *testing.T) {
 	}
 }
 
+// TestCmdSyncPruneUnknownFilterFails guards the cron-typo trap: a -name/-server
+// that matches no entry must exit non-zero instead of reporting "成功 0".
+func TestCmdSyncPruneUnknownFilterFails(t *testing.T) {
+	root := t.TempDir()
+	cfgPath := filepath.Join(root, "config.toml")
+	cfg := "[[sync]]\n" +
+		"  name = \"web\"\n  host = \"h\"\n  user = \"u\"\n" +
+		"  remote_path = \"/r\"\n  local_path = \"" + filepath.Join(root, "web") + "\"\n"
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if rc := cmdSync([]string{"--config", cfgPath, "--name", "typo"}); rc != 1 {
+		t.Fatalf("sync --name typo rc = %d, want 1", rc)
+	}
+	if rc := cmdSync([]string{"--config", cfgPath, "--server", "typo"}); rc != 1 {
+		t.Fatalf("sync --server typo rc = %d, want 1", rc)
+	}
+	if rc := cmdPrune([]string{"--config", cfgPath, "--name", "typo"}); rc != 1 {
+		t.Fatalf("prune --name typo rc = %d, want 1", rc)
+	}
+}
+
 func TestCmdRestoreHappyPath(t *testing.T) {
 	root := t.TempDir()
 	local := filepath.Join(root, "web")
