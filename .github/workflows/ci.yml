@@ -1,0 +1,46 @@
+# 仅在 PR 上运行的 CI：格式检查 + vet + 构建 + 单元测试。
+# 触发时机是 PR 打开/更新时，检查结果直接作为合并门槛（不通过则不该合并），
+# 普通分支 push 不触发。e2e 测试有 build tag 保护，此处不会运行。
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Check formatting (gofmt)
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "以下文件未通过 gofmt，请运行 gofmt -w ："
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Build
+        env:
+          CGO_ENABLED: "0"
+        run: go build -trimpath -ldflags "-s -w" -o /dev/null .
+
+      - name: Test (with race detector)
+        env:
+          CGO_ENABLED: "1" # race detector 需要 cgo
+        run: go test -race -count=1 ./...
