@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"syscall"
 	"time"
 
 	"gsyncer/internal/execx"
@@ -23,14 +22,9 @@ const BtrfsMagic int64 = 0x9123683E
 // FSTypeFunc returns the filesystem magic number for a path.
 type FSTypeFunc func(path string) (int64, error)
 
-// RealFSType returns the statfs f_type for path (Linux).
-func RealFSType(path string) (int64, error) {
-	var st syscall.Statfs_t
-	if err := syscall.Statfs(path, &st); err != nil {
-		return 0, err
-	}
-	return int64(st.Type), nil
-}
+// RealFSType returns the statfs f_type for path. It is implemented per platform:
+// the Linux build queries statfs, other platforms report a non-btrfs filesystem
+// (see snapshot_linux.go / snapshot_other.go).
 
 // Backend creates and manages snapshots under a local root directory.
 type Backend interface {
