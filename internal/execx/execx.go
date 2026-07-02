@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"sync"
@@ -97,8 +98,20 @@ func (Real) RunStream(ctx context.Context, onLine func(string), name string, arg
 			onLine(line)
 		}
 	}
+	// A scanner error (e.g. a line beyond the 1MB cap) ends the loop with the
+	// pipe still open. Keep draining it, or the child blocks on a full pipe and
+	// cmd.Wait below never returns.
+	scanErr := sc.Err()
+	if scanErr != nil {
+		_, _ = io.Copy(io.Discard, stdout)
+	}
 
 	err = cmd.Wait()
+	if err == nil {
+		// Surface the truncation: downstream parsers saw partial stdout even
+		// though the command itself exited 0.
+		err = scanErr
+	}
 	res := Result{Stdout: so.String(), Stderr: se.String()}
 	if ee, ok := err.(*exec.ExitError); ok {
 		res.Code = ee.ExitCode()

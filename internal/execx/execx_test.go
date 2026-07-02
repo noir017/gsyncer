@@ -86,6 +86,22 @@ func TestRealRunStreamNonZeroExit(t *testing.T) {
 	}
 }
 
+func TestRealRunStreamOverlongLineDoesNotHang(t *testing.T) {
+	// A single line beyond the scanner's 1MB cap stops the read loop early.
+	// RunStream must keep draining the pipe (or the child blocks writing and
+	// Wait never returns) and surface the truncation as an error. The child
+	// keeps producing output after the overlong line to exercise the drain.
+	var r Real
+	res, err := r.RunStream(context.Background(), nil, "sh", "-c",
+		`head -c 2097152 /dev/zero | tr '\0' 'a'; echo; echo tail-marker`)
+	if err == nil {
+		t.Fatal("expected an error for an overlong line")
+	}
+	if strings.Contains(res.Stdout, "tail-marker") {
+		t.Fatalf("stdout after the overlong line should be dropped, got %d bytes", len(res.Stdout))
+	}
+}
+
 func TestScanLinesCRCoalescesCRLF(t *testing.T) {
 	// A \r\n pair must be a single break (no spurious empty token).
 	adv, tok, _ := scanLinesCR([]byte("hi\r\nrest"), false)
