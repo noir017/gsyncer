@@ -10,7 +10,7 @@
 
 ### 1. 获取可执行文件
 
-需要 Go 1.22+，用仓库自带脚本编译：
+需要 Go 1.25+（1.21+ 且 `GOTOOLCHAIN=auto` 时会自动下载所需工具链），用仓库自带脚本编译：
 
 ```bash
 ./build.sh          # 产出 dist/gsyncer（linux/amd64 静态单文件）
@@ -127,7 +127,10 @@ gsyncer help                       # 显示帮助（也支持 -h / --help）
 ```
 
 - 通用标志：`--config <path>` 指定配置文件。
-- 退出码：任一条目失败返回非 0，方便脚本判断；`status --stale-hours` 超期返回 3。
+- 退出码：任一条目失败返回非 0，方便脚本判断；`status --stale-hours` 超期返回 3；
+  `sync` / `prune` 的 `--name` / `--server` 匹配不到任何条目时报错返回 1（防止拼写错误在 cron 里静默「成功」）。
+- `--dry-run`：不改动 `current/` 内容、不创建快照、不执行钩子；但仍会创建
+  `local_path` 目录与锁文件（预演也参与同一把锁的互斥）。
 - `restore`：需 `--name` 与 `--to`，并二选一 `--at <时间戳>` 或 `--latest`；不会覆盖
   `current/` 目录，目标已存在时须加 `--force`（先清空再 `cp -a`）。
 

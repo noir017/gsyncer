@@ -1,14 +1,21 @@
-# 推送 v* 标签时自动构建多平台二进制并发布 GitHub Release。
-# 用法:
-#   git tag v0.2.0
-#   git push origin v0.2.0
-# 版本号取自标签（去掉 v 前缀），通过 -ldflags -X 注入 main.version。
+# 构建多平台二进制并发布 GitHub Release。
+# 两种触发方式：
+#   1. 推送 v* 标签（自动）：  git tag v0.2.0 && git push origin v0.2.0
+#   2. Actions 页面手动运行（workflow_dispatch）：填入版本号（带 v 前缀，如 v0.2.0），
+#      会在当前分支的最新 commit 上创建该标签并发布。
+# 版本号取自标签或手动输入（去掉 v 前缀），通过 -ldflags -X 注入 main.version。
 name: Release
 
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号（带 v 前缀，如 v0.2.0）"
+        required: true
+        type: string
 
 permissions:
   contents: write # 创建 Release 需要写权限
@@ -42,9 +49,11 @@ jobs:
       - name: Build binaries
         env:
           CGO_ENABLED: "0" # 静态编译，不链接 libc（与 build.sh 保持一致）
+          # tag 触发时 inputs.version 为空，回退到标签名 github.ref_name；手动触发用输入值。
+          RELEASE_TAG: ${{ inputs.version || github.ref_name }}
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           mkdir -p dist
 
           # 目标平台列表: GOOS/GOARCH
@@ -79,5 +88,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          # 显式指定标签：tag 触发时即该标签；手动触发时在当前 commit 上创建它。
+          tag_name: ${{ inputs.version || github.ref_name }}
           files: dist/*
           generate_release_notes: true # 从合并的 PR / commit 自动生成更新日志
