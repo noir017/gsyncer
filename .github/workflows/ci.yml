@@ -1,0 +1,62 @@
+name: CI
+
+# 编译 + 测试。分支推送与 PR 自动触发；标签推送不触发（由 release.yml 通过
+# workflow_call 复用本文件，避免打标签时重复跑一遍完整流水线）。
+#
+# 只声明 branches 过滤器时，GitHub 不会为标签推送触发本工作流——这正是我们要的。
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: 编译与测试
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Go
+        uses: actions/setup-go@v5
+        with:
+          # 从 go.mod 读取版本，避免这里和 go.mod 各说各话。
+          go-version-file: go.mod
+          cache: true
+
+      - name: 检查格式 (gofmt)
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "以下文件未通过 gofmt，请运行 gofmt -w ："
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: 校验依赖完整性
+        run: go mod verify
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: 构建静态单文件
+        run: VERSION="ci-${GITHUB_SHA::7}" ./build.sh dist/gsyncer
+
+      - name: 运行测试（含竞态检测）
+        # 竞态检测需要 cgo；gsyncer 本身用 CGO_ENABLED=0 发布，二者互不影响。
+        env:
+          CGO_ENABLED: "1"
+        run: go test -race -count=1 ./...
+
+      # 方便从任意提交上取一份可运行的二进制，不必等打标签发版。
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: gsyncer-linux-amd64-${{ github.sha }}
+          path: dist/gsyncer
+          retention-days: 14
+          if-no-files-found: error

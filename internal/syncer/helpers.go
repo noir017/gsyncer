@@ -82,15 +82,22 @@ func knownHostsOpts(knownHosts string) []string {
 	}
 }
 
+// sshBaseArgs builds the ssh options shared by the rsync transport (-e) and the
+// standalone ssh calls used for remote cleanup, so both speak to the host with
+// the same identity, port, timeout, and host-key policy.
+func sshBaseArgs(identity string, port int, strict bool, knownHosts string) []string {
+	args := []string{"-p", strconv.Itoa(port), "-o", "BatchMode=yes",
+		"-o", "ConnectTimeout=" + strconv.Itoa(sshConnectTimeout), "-o", strictOpt(strict)}
+	args = append(args, knownHostsOpts(knownHosts)...)
+	if identity != "" {
+		args = append(args, "-i", config.ExpandHome(identity))
+	}
+	return args
+}
+
 // sshOptArg builds the single string passed to rsync's -e option.
 func sshOptArg(identity string, port int, strict bool, knownHosts string) string {
-	parts := []string{"ssh", "-p", strconv.Itoa(port), "-o", "BatchMode=yes",
-		"-o", "ConnectTimeout=" + strconv.Itoa(sshConnectTimeout), "-o", strictOpt(strict)}
-	parts = append(parts, knownHostsOpts(knownHosts)...)
-	if identity != "" {
-		parts = append(parts, "-i", config.ExpandHome(identity))
-	}
-	return strings.Join(parts, " ")
+	return strings.Join(append([]string{"ssh"}, sshBaseArgs(identity, port, strict, knownHosts)...), " ")
 }
 
 // ensureTrailingSlash guarantees a trailing slash (rsync dir-content semantics).
@@ -106,6 +113,24 @@ func ensureTrailingSlash(p string) string {
 // root means an interrupted large file never pollutes current/ or a snapshot.
 const partialDir = ".gsyncer-partial"
 
+// rsyncOpts carries the per-entry knobs that are resolved from config (entry
+// override over defaults) rather than read straight off config.Sync. It is a
+// struct so adding a knob does not grow buildRsyncArgs' parameter list into an
+// unreadable row of bare bools at every call site.
+type rsyncOpts struct {
+	dryRun   bool
+	compress bool
+	bwlimit  int
+	// archive drops --delete so current/ accumulates instead of tracking the
+	// remote; see config.LocalModeArchive.
+	archive bool
+	// removeSource adds --remove-source-files, letting rsync delete each remote
+	// file it has *successfully* transferred. Using rsync's own accounting is the
+	// point: it knows exactly which transfers succeeded, which no external
+	// file-list-and-timestamp scheme can reconstruct accurately.
+	removeSource bool
+}
+
 // buildRsyncArgs assembles the full rsync argument list for one entry. The -s
 // (--protect-args) flag stops the remote shell from a second round of
 // word-splitting/globbing on the remote path, so spaces or shell metacharacters
@@ -117,22 +142,35 @@ const partialDir = ".gsyncer-partial"
 // the mirror. --numeric-ids preserves uid/gid verbatim (a faithful backup, and
 // no remote name lookups). -z (compress) is opt-in per entry / default; bwlimit
 // throttles the transfer rate (KB/s) when configured.
-func buildRsyncArgs(s config.Sync, port int, currentPath string, dryRun, compress bool, knownHosts string, bwlimit int) []string {
+//
+// --delete is present only in mirror mode: an archive must never let a file
+// disappearing from the remote (which, with removeSource, is every file gsyncer
+// itself just pulled) propagate into current/.
+func buildRsyncArgs(s config.Sync, port int, currentPath string, knownHosts string, o rsyncOpts) []string {
 	// stats2 feeds parseStats (Files/Bytes); progress2 emits an aggregate
 	// progress line that RunStream forwards live to the run screen.
-	args := []string{"-a", "-s", "--delete", "--numeric-ids",
+	args := []string{"-a", "-s", "--numeric-ids",
 		"--partial", "--partial-dir=" + partialDir,
 		"--info=stats2,progress2", "--timeout", strconv.Itoa(rsyncIOTimeout)}
-	if compress {
+	if !o.archive {
+		args = append(args, "--delete")
+	}
+	if o.removeSource {
+		// rsync deletes a source file only after that file's transfer is verified,
+		// and -n makes the whole run a no-op, so a dry-run preview stays read-only
+		// on the remote as well as locally.
+		args = append(args, "--remove-source-files")
+	}
+	if o.compress {
 		args = append(args, "-z")
 	}
-	if dryRun {
+	if o.dryRun {
 		args = append(args, "-n")
 	}
 	// Throttle transfer rate when configured (KB/s); a plain passthrough to
 	// rsync's own --bwlimit so an unattended pull doesn't saturate a link.
-	if bwlimit > 0 {
-		args = append(args, "--bwlimit", strconv.Itoa(bwlimit))
+	if o.bwlimit > 0 {
+		args = append(args, "--bwlimit", strconv.Itoa(o.bwlimit))
 	}
 	// Exclude the partial-dir first (rsync is first-match-wins) so no user rule
 	// can pull the in-transfer staging dir into the mirror.

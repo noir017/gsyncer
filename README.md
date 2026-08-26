@@ -10,13 +10,23 @@
 
 ### 1. 获取可执行文件
 
-需要 Go 1.22+，用仓库自带脚本编译：
+从 [Releases](../../releases) 下载对应架构的静态单文件即可，无需装 Go：
+
+```bash
+# 按需替换版本号与架构（linux-amd64 / linux-arm64 / linux-arm）
+curl -LO https://github.com/noir017/gsyncer/releases/download/v0.1.0/gsyncer-v0.1.0-linux-amd64
+curl -LO https://github.com/noir017/gsyncer/releases/download/v0.1.0/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS      # 校验完整性
+chmod +x gsyncer-v0.1.0-linux-amd64 && mv gsyncer-v0.1.0-linux-amd64 gsyncer
+```
+
+也可以自己编译（需要 Go 1.22+）：
 
 ```bash
 ./build.sh          # 产出 dist/gsyncer（linux/amd64 静态单文件）
 ```
 
-把 `dist/gsyncer` 拷到目标机器即可（无需安装任何依赖）。
+把二进制拷到目标机器即可（无需安装任何依赖）。
 
 > 运行前提：本机装有 `ssh`、`rsync`，远程主机装有 `rsync`。
 
@@ -85,7 +95,9 @@ name=web host=example.com user=deploy remote=/srv/www local=/data/web
   - 键值对：`name=web host=1.2.3.4 port=22 user=deploy remote=/srv local=/data`
 - 忽略规则是多行框，`↑` / `↓` 在框内移动光标，光标到首行 / 末行再按一次才会跳到相邻字段；
 - 新增条目会预填默认端口、常见忽略规则、保留策略；
-- `空格` 切换 strict host key；`ctrl+s` 保存；`esc` 取消（有未保存改动会先提示）。
+- `空格` 切换 strict host key、「归档」与「清远端」三个开关；两个数据模型开关会互相
+  联动，避免拼出「镜像 + 删远端源」这个会毁掉备份的组合；
+- `ctrl+s` 保存；`esc` 取消（有未保存改动会先提示）。
 
 ### 快照浏览
 
@@ -155,6 +167,8 @@ gsyncer help                       # 显示帮助（也支持 -h / --help）
   bwlimit  = 0                   # rsync 限速 KB/s，0 = 不限速（条目可覆盖）
   pre_sync  = ""                 # 每个条目 rsync 前执行的命令（sh -c）
   post_sync = ""                 # 同步成功后执行的命令（sh -c）
+  local_mode          = "mirror" # 本地数据模型：mirror（默认）/ archive（条目可覆盖）
+  remove_source_files = false    # 同步成功后是否删除远端源文件（条目可覆盖）
   [defaults.retention]           # 条目未覆盖时的默认保留策略
     recent     = 7
     monthly    = 6
@@ -190,6 +204,16 @@ gsyncer help                       # 显示帮助（也支持 -h / --help）
     monthly    = 12
     semiannual = 4
     yearly     = 5
+
+# 归档模式：远端是滚动窗口，本地是永久归档
+[[sync]]
+  name        = "cam"
+  host        = "192.168.1.50"
+  user        = "root"
+  remote_path = "/mnt/sd/record"
+  local_path  = "/data/backups/cam"
+  local_mode          = "archive"  # current/ 不做 --delete，只增不减
+  remove_source_files = true       # 传输成功后删除远端源文件，给远端腾出空间
 ```
 
 > 提示：`gsyncer init` 会生成一份带上述注释的起始配置，改好后用 `gsyncer check` 校验。
@@ -211,6 +235,8 @@ gsyncer help                       # 显示帮助（也支持 -h / --help）
 | `bwlimit` | | rsync 限速 KB/s（0 = 不限速）；覆盖 `defaults.bwlimit` |
 | `pre_sync` | | rsync 前执行的命令；失败则跳过该条目（覆盖 `defaults.pre_sync`） |
 | `post_sync` | | 同步成功后执行的命令；失败仅告警（覆盖 `defaults.post_sync`） |
+| `local_mode` | | 本地数据模型：`"mirror"`（默认，`current/` 恒等于远端）或 `"archive"`（`current/` 只增不减）；覆盖 `defaults.local_mode` |
+| `remove_source_files` | | 同步成功后是否删除远端源文件；覆盖 `defaults.remove_source_files` |
 | `retention` | | 覆盖默认保留策略，未填字段回退到 `defaults.retention` |
 
 `pre_sync` / `post_sync` 经 `sh -c` 执行，条目信息以环境变量传入：`GSYNC_NAME`、
@@ -222,8 +248,58 @@ gsyncer help                       # 显示帮助（也支持 -h / --help）
 > `post_sync` 重启，中途失败会让服务停着。请让 `pre_sync` 的副作用可自恢复（例如用
 > systemd 的 `RuntimeMaxSec` 自动重启），或把停/启逻辑放在 gsyncer 之外统一编排。
 
-### `[notify]` 字段
+### 归档模式（`local_mode` / `remove_source_files`）
 
+这两个字段互相**正交**：一个描述本地侧语义，一个描述远端侧行为。
+
+| 字段 | 取值 | 含义 |
+|------|------|------|
+| `local_mode` | `"mirror"`（默认） | rsync 带 `--delete`，`current/` 恒等于远端；**远端是数据主体** |
+| | `"archive"` | rsync 不带 `--delete`，`current/` 只增不减；**本地是数据主体** |
+| `remove_source_files` | `false`（默认） | 不动远端 |
+| | `true` | 传输成功后删除远端源文件（用 rsync 自己的 `--remove-source-files`） |
+
+四种组合里三种有意义，第四种会被**配置校验直接拒绝**：
+
+| 组合 | 结果 |
+|------|------|
+| `mirror` + 不删远端 | 经典镜像（默认行为） |
+| `archive` + 不删远端 | 本地累积历史，远端原样不动 |
+| `archive` + 删远端 | **远端滚动窗口 + 本地永久归档** |
+| `mirror` + 删远端 | ❌ 加载时报错 |
+
+最后一种不是"不推荐"，而是会**安静地毁掉备份**：第一轮同步把远端清空，第二轮的
+`--delete` 就忠实地把这份"空"镜像回 `current/`，此时只剩快照里还有数据，而保留策略
+会按计划把它们一一老化删除——每个部件都在按文档行事，备份却把自己删干净了。所以它
+是一条加载期的硬错误，而不是文档里的一句提醒。
+
+**删远端用的是 rsync 自己的 `--remove-source-files`**：rsync 只删*确认传输成功*的
+文件，这个判定它自己最清楚，比在外部用"文件清单 + 时间戳"反推准确得多，也不需要在
+被备份的机器上额外部署脚本。
+
+**空目录清理**：rsync 只删文件不删目录，所以 `archive` + 删远端的场景下远端会累积空
+目录（典型如每天一个日期目录）。gsyncer 会在**传输确实成功后**补一次清理，只删已经
+为空的目录，且 `-mindepth 1` 保证 `remote_path` 本身不会被删掉；因此任何没传走的文件
+（被忽略规则排除、或传输失败）都会撑住它的父目录，不会被误删。清理失败只告警，不影响
+备份结果（数据已经在本地了）。
+
+**预演（`--dry-run`）不删任何东西**：rsync 在 `-n` 下 `--remove-source-files` 本身就是
+空操作，而空目录清理会被整个跳过——不存在"安全版的删除"。
+
+#### 归档模式下 GFS 保留策略恢复了正常语义
+
+这是本次改动最大的收益，值得单独说清楚：
+
+- **镜像模式**下，`current/` 只是远端的副本，历史**只存在于快照里**。要长期留存就只能
+  把 `retention` 拉到极大值，GFS 策略实际上等于废掉——谁改一下配置就真的丢数据。
+- **归档模式**下，`current/` 本身就是数据主体，快照只是"某个时间点的视图"。
+  **删掉一份快照不丢任何数据**，被删的文件仍然在 `current/` 里。
+
+所以在归档模式下，请按正常的 GFS 思路配置 `retention`（例如默认的 `recent=7` /
+`monthly=6`），**不要**再把它拉满。快照在这里的作用是"回到某天的目录状态"，而不是
+"唯一的数据副本"。
+
+### `[notify]` 字段
 | 字段 | 说明 |
 |------|------|
 | `on_failure` | 有条目失败时通知（默认 `false`） |
@@ -242,7 +318,7 @@ webhook 的 JSON 含每条目的 `host`/`ok`/`error`/`files`/`bytes`/`duration_s
 对每个同步条目，依次执行：
 
 1. **预检**：检查本地 `rsync` 是否可用（远程 `rsync` 不再单独探测，省一次 ssh 握手；若远程缺失，rsync 自身会以 127/"command not found" 失败并给出安装提示）。
-2. **拉取**：`rsync -a --delete` 把 `user@host:remote_path/` 同步到本地 `local_path/current/`，并应用忽略规则。传输恒带 `--partial`（配合 `--partial-dir=.gsyncer-partial` 断点续传、半成品不落入 `current/`）与 `--numeric-ids`（按数字保留 uid/gid）；`compress` 开启时附加 `-z`。
+2. **拉取**：`rsync -a --delete` 把 `user@host:remote_path/` 同步到本地 `local_path/current/`，并应用忽略规则。传输恒带 `--partial`（配合 `--partial-dir=.gsyncer-partial` 断点续传、半成品不落入 `current/`）与 `--numeric-ids`（按数字保留 uid/gid）；`compress` 开启时附加 `-z`。归档模式（`local_mode = "archive"`）下**不带** `--delete`，`current/` 只增不减；`remove_source_files = true` 时附加 `--remove-source-files`，并在传输成功后清理远端遗留的空目录。
 3. **快照**：把 `current/` 快照到 `local_path/snapshots/<时间戳>/`
    - 默认用**硬链接**后端：未改动的文件与上一份共享 inode，几乎不额外占空间；在支持 reflink 的 CoW 文件系统（如 xfs reflink、bcachefs）上自动升级为 **reflink** 拷贝——每份快照有独立 inode、数据块按需写时复制，既省空间又不会因就地改写 `current/` 里的文件而牵连旧快照（run 汇总里模式会显示 `reflink`）；
    - 若 `local_path` 在 btrfs 上且系统有 `btrfs` 命令，则用 **btrfs** 子卷快照。
@@ -252,7 +328,8 @@ webhook 的 JSON 含每条目的 `host`/`ok`/`error`/`files`/`bytes`/`duration_s
 
 ```
 local_path/
-├── current/                     # 与远程一致的最新镜像
+├── current/                     # 镜像模式：与远程一致的最新镜像
+│                                # 归档模式：累积至今的全部历史（数据主体）
 └── snapshots/
     ├── 2026-06-24_030000/       # 历史快照（时间戳目录）
     └── 2026-06-24_153000/
@@ -269,6 +346,13 @@ local_path/
 
 这里的「最近」是相对于**已有快照集合**而言（并非按当前日期回溯的自然周期），且**最新的一份快照始终保留**（安全下限，避免清空刚创建的快照）。不在保留集合中的快照会在 `sync` 末尾或 `prune` 时删除。某层计数为 `0` 表示不保留该层。
 
+保留策略的**后果取决于 `local_mode`**：
+
+- **镜像模式**：`current/` 只是远端的副本，历史只存在于快照里，因此删快照 = 丢历史；
+- **归档模式**：`current/` 才是数据主体，**删掉一份快照不丢任何数据**，只是少了一个
+  可回溯的时间点。这一模式下 GFS 恢复了它本来的语义，按常规值配置即可，
+  不需要把 `retention` 拉满。详见 [归档模式](#归档模式local_mode--remove_source_files)。
+
 ### 日志
 
 每次 `sync` / `prune` 在可执行文件同目录的 `logs/` 下生成一份运行日志，并追加一行汇总；旧日志按 `[log]` 的 `keep_days` / `keep_count` 自动清理。
@@ -281,9 +365,26 @@ local_path/
 ./build.sh                        # 默认 dist/gsyncer (linux/amd64)
 ./build.sh /usr/local/bin/gsyncer   # 指定输出路径
 GOARCH=arm64 ./build.sh           # 交叉编译 arm64
+VERSION=1.2.3 ./build.sh          # 把版本号写进 `gsyncer version`
 ```
 
 脚本用 `CGO_ENABLED=0` + `-ldflags "-s -w" -trimpath` 产出静态、精简、可复现的二进制，并自动校验 `ldd` 为 `not a dynamic executable`。也可直接 `CGO_ENABLED=0 go build -o gsyncer .`。
+
+`VERSION` 通过 `-X main.version=` 注入，不填就用源码里的默认值——发版由 CI 自动填入标签名，本地构建不用管。
+
+### 持续集成与发版
+
+仓库同时带了 Gitea（`.gitea/workflows/`）和 GitHub（`.github/workflows/`）两套流水线，检查项一致。
+
+**`ci.yml`** — 推分支或提 PR 时跑：`gofmt` 格式门禁 → `go mod verify` → `go vet ./...` → 静态编译 → `go test -race -count=1 ./...`。产物会作为 artifact 保留 14 天，便于从任意提交取一份能跑的二进制。
+
+**`release.yml`** — 推 `v*` 标签时跑：先用 `workflow_call` 完整复用一遍 `ci.yml`，**测试不过就不会有 Release**；随后交叉编译 `linux/amd64`、`linux/arm64`、`linux/arm`（armv7），把标签名注入版本号，冒烟测试 amd64 产物（确认静态链接且版本号正确），最后连同 `SHA256SUMS` 一起发到 GitHub Releases。
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0     # 触发发版
+```
+
+标签名带 `-` 的（如 `v0.2.0-rc1`）自动标记为预发布，不会顶掉 latest。若某次 Release 创建失败，可用 workflow_dispatch 指定已有标签重跑，产物会覆盖上传而不动已有的说明文字。
 
 ### 运行测试
 

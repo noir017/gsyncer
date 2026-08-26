@@ -9,10 +9,28 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
 	"github.com/BurntSushi/toml"
+)
+
+// Local-side data models. They decide one thing only: whether rsync is allowed
+// to delete from current/.
+//
+//   - LocalModeMirror keeps current/ byte-identical to the remote (rsync
+//     --delete). The remote is the source of truth; history lives in snapshots.
+//   - LocalModeArchive drops --delete, so current/ only ever grows. The local
+//     copy is the source of truth and files removed remotely — or moved out of
+//     the remote's rolling window entirely — are kept forever.
+//
+// This is orthogonal to Sync.RemoveSourceFiles, which decides whether the
+// *remote* is emptied after a successful transfer; see Config.Validate for the
+// one combination of the two that is rejected.
+const (
+	LocalModeMirror  = "mirror"
+	LocalModeArchive = "archive"
 )
 
 // StarterTemplate is a commented example config written by `gsyncer init`. It
@@ -49,6 +67,18 @@ const StarterTemplate = `# gsyncer 配置文件
 #
 #   [sync.retention]                    # 可选：覆盖默认保留策略，未填字段回退到 defaults
 #     recent = 14
+
+# --- 归档模式示例：远端是滚动窗口，本地是永久归档 ---
+# 适用于远端磁盘装不下自己的历史（如 SBC 上的监控录像）：同步后删掉远端源文件，
+# 本地 current/ 只增不减地累积全部历史。
+# [[sync]]
+#   name        = "cam"
+#   host        = "192.168.1.50"
+#   user        = "root"
+#   remote_path = "/mnt/sd/record"
+#   local_path  = "/data/backups/cam"
+#   local_mode          = "archive"     # current/ 不做 --delete，只增不减
+#   remove_source_files = true          # 传输成功后删除远端源文件，腾出空间
 `
 
 // Retention is the resolved keep-count for each layer.
@@ -96,13 +126,19 @@ type NotifyConfig struct {
 
 // Defaults holds project-wide defaults.
 type Defaults struct {
-	SSHPort   int       `toml:"ssh_port"`
-	Jobs      int       `toml:"jobs"`
-	Compress  bool      `toml:"compress"`
-	Bwlimit   int       `toml:"bwlimit"`   // rsync --bwlimit in KB/s; 0 = unlimited
-	PreSync   string    `toml:"pre_sync"`  // shell command run before each entry's rsync
-	PostSync  string    `toml:"post_sync"` // shell command run after a successful sync
-	Retention Retention `toml:"retention"`
+	SSHPort  int    `toml:"ssh_port"`
+	Jobs     int    `toml:"jobs"`
+	Compress bool   `toml:"compress"`
+	Bwlimit  int    `toml:"bwlimit"`   // rsync --bwlimit in KB/s; 0 = unlimited
+	PreSync  string `toml:"pre_sync"`  // shell command run before each entry's rsync
+	PostSync string `toml:"post_sync"` // shell command run after a successful sync
+	// LocalMode is the default local-side data model ("mirror" or "archive");
+	// "" means mirror, keeping existing configs on today's behaviour.
+	LocalMode string `toml:"local_mode"`
+	// RemoveSourceFiles is the default for deleting remote source files after a
+	// successful transfer. Off unless explicitly enabled.
+	RemoveSourceFiles bool      `toml:"remove_source_files"`
+	Retention         Retention `toml:"retention"`
 }
 
 // EffectiveJobs resolves the concurrency for a run: a positive defaults.jobs
@@ -130,6 +166,14 @@ type Sync struct {
 	PreSync       string             `toml:"pre_sync"`  // overrides defaults.pre_sync; "" = inherit
 	PostSync      string             `toml:"post_sync"` // overrides defaults.post_sync; "" = inherit
 	Retention     *RetentionOverride `toml:"retention"`
+	// LocalMode selects the local-side data model: "mirror" (current/ tracks the
+	// remote via --delete, the default) or "archive" (current/ only grows).
+	// "" inherits defaults.local_mode.
+	LocalMode string `toml:"local_mode"`
+	// RemoveSourceFiles asks rsync to delete each remote source file it has
+	// successfully transferred, for remotes too small to hold their own history.
+	// nil inherits defaults.remove_source_files.
+	RemoveSourceFiles *bool `toml:"remove_source_files"`
 }
 
 // Config is the whole file.
@@ -288,6 +332,37 @@ func (c *Config) Validate() error {
 			c.Warnings = append(c.Warnings, fmt.Sprintf("sync %q: %s", s.Name, msg))
 		}
 	}
+	// A typo in defaults.local_mode is caught even when every entry overrides it,
+	// so the mistake surfaces where it was written rather than silently never
+	// applying.
+	if m := c.Defaults.LocalMode; m != "" && m != LocalModeMirror && m != LocalModeArchive {
+		return fmt.Errorf("defaults: local_mode must be %q or %q, got %q",
+			LocalModeMirror, LocalModeArchive, m)
+	}
+	// The mirror + remove_source_files guardrail is checked on each entry's
+	// *effective* values: defaults carrying remove_source_files=true is legitimate
+	// as long as every entry that inherits it is an archive.
+	for _, s := range c.Sync {
+		if err := checkModeCombo(fmt.Sprintf("sync %q", s.Name),
+			s.EffectiveLocalMode(c.Defaults), s.EffectiveRemoveSourceFiles(c.Defaults)); err != nil {
+			return err
+		}
+	}
+	// Deleting remote source files is destructive and driven entirely by
+	// remote_path, so demand a path that is absolute (no surprise dependence on
+	// the login shell's cwd) and not the remote root.
+	for _, s := range c.Sync {
+		if !s.EffectiveRemoveSourceFiles(c.Defaults) {
+			continue
+		}
+		rp := strings.TrimSpace(s.RemotePath)
+		if !strings.HasPrefix(rp, "/") {
+			return fmt.Errorf("sync %q: remove_source_files requires an absolute remote_path, got %q", s.Name, s.RemotePath)
+		}
+		if path.Clean(rp) == "/" {
+			return fmt.Errorf("sync %q: remove_source_files must not target the remote filesystem root", s.Name)
+		}
+	}
 	if c.Defaults.Bwlimit < 0 {
 		return fmt.Errorf("defaults: bwlimit must be >= 0")
 	}
@@ -314,6 +389,37 @@ func (c *Config) Validate() error {
 		if !strings.HasPrefix(w, "http://") && !strings.HasPrefix(w, "https://") {
 			return fmt.Errorf("notify: webhook must start with http:// or https://, got %q", w)
 		}
+	}
+	return nil
+}
+
+// checkModeCombo validates one entry's local_mode / remove_source_files pair.
+// Three of the four combinations are meaningful; the fourth is a data-loss trap
+// that must never reach a run:
+//
+//	mirror  + keep remote   → the classic mirror (default)
+//	archive + keep remote   → local accumulates, remote untouched
+//	archive + delete remote → rolling remote window, permanent local archive
+//	mirror  + delete remote → REJECTED
+//
+// The rejected pair destroys the backup silently: run 1 pulls the files and
+// empties the remote, then run 2's --delete faithfully mirrors that now-empty
+// remote back over current/. The only surviving copies are snapshots, which the
+// retention policy then ages out on schedule — a backup that deletes itself
+// with every component behaving exactly as documented. A doc note is not enough
+// protection for that, so it is a load-time error.
+func checkModeCombo(ctx string, mode string, removeSource bool) error {
+	switch mode {
+	case LocalModeMirror, LocalModeArchive:
+	default:
+		return fmt.Errorf("%s: local_mode must be %q or %q, got %q",
+			ctx, LocalModeMirror, LocalModeArchive, mode)
+	}
+	if mode == LocalModeMirror && removeSource {
+		return fmt.Errorf("%s: local_mode=%q with remove_source_files=true would destroy the backup "+
+			"(deleting the remote makes the next --delete run wipe current/); "+
+			"use local_mode=%q to keep a permanent local archive",
+			ctx, LocalModeMirror, LocalModeArchive)
 	}
 	return nil
 }
@@ -362,6 +468,34 @@ func (s Sync) EffectivePostSync(d Defaults) string {
 		return s.PostSync
 	}
 	return d.PostSync
+}
+
+// EffectiveLocalMode resolves the local-side data model: entry > defaults >
+// mirror. An unrecognised value is not corrected here — Validate rejects it, so
+// this only ever returns a known mode for a config that loaded successfully.
+func (s Sync) EffectiveLocalMode(d Defaults) string {
+	if s.LocalMode != "" {
+		return s.LocalMode
+	}
+	if d.LocalMode != "" {
+		return d.LocalMode
+	}
+	return LocalModeMirror
+}
+
+// IsArchive reports whether this entry uses the archive model, i.e. rsync must
+// run without --delete so current/ accumulates rather than tracks the remote.
+func (s Sync) IsArchive(d Defaults) bool {
+	return s.EffectiveLocalMode(d) == LocalModeArchive
+}
+
+// EffectiveRemoveSourceFiles resolves whether rsync deletes the remote source
+// files it transferred: entry > defaults (off).
+func (s Sync) EffectiveRemoveSourceFiles(d Defaults) bool {
+	if s.RemoveSourceFiles != nil {
+		return *s.RemoveSourceFiles
+	}
+	return d.RemoveSourceFiles
 }
 
 // EffectiveRetention merges the entry override over defaults.

@@ -28,12 +28,15 @@ const (
 	numInputs
 )
 
-// focus slots: inputs (0..numInputs-1), strict toggle, ignore textarea, ret[0..3].
+// focus slots: inputs (0..numInputs-1), strict toggle, the two data-model
+// toggles, ignore textarea, ret[0..3].
 const (
-	focusStrict = numInputs
-	focusIgnore = numInputs + 1
-	focusRet0   = numInputs + 2
-	numFocus    = focusRet0 + 4
+	focusStrict    = numInputs
+	focusArchive   = numInputs + 1
+	focusRemoveSrc = numInputs + 2
+	focusIgnore    = numInputs + 3
+	focusRet0      = numInputs + 4
+	numFocus       = focusRet0 + 4
 	// focusPaste is an extra slot only present for new entries (origIdx < 0).
 	focusPaste = numFocus
 )
@@ -50,7 +53,13 @@ type formModel struct {
 	ret    []textinput.Model // 4: recent, monthly, semiannual, yearly
 	paste  textinput.Model   // quick-entry parser (new entries only)
 	strict bool
-	focus  int
+	// archive / removeSrc mirror the entry's local_mode and remove_source_files.
+	// They are shown as effective values (entry override resolved over defaults)
+	// so the form always reflects what a run would actually do; toSync writes an
+	// explicit override back only when the choice differs from the default.
+	archive   bool
+	removeSrc bool
+	focus     int
 
 	initial map[string]string // snapshot for dirty detection
 	status  string
@@ -83,11 +92,16 @@ func newForm(cfg *config.Config, cfgPath string, origIdx int) formModel {
 
 	if origIdx >= 0 && origIdx < len(cfg.Sync) {
 		s := cfg.Sync[origIdx]
-		fillInputs(&m, s)
+		fillInputs(&m, s, cfg.Defaults)
 	} else {
 		// new entry: seed sensible defaults so not every field is manual.
 		m.inputs[fPort].SetValue(strconv.Itoa(defaultPort(cfg.Defaults)))
 		m.ignore.SetValue(strings.Join(defaultIgnore, "\n"))
+		// The data model follows [defaults] so a project that archives by default
+		// doesn't need every new entry re-ticked (and can't have one silently
+		// created as a mirror).
+		m.archive = (config.Sync{}).IsArchive(cfg.Defaults)
+		m.removeSrc = (config.Sync{}).EffectiveRemoveSourceFiles(cfg.Defaults)
 		r := defaultRetention(cfg.Defaults)
 		m.ret[0].SetValue(strconv.Itoa(r.Recent))
 		m.ret[1].SetValue(strconv.Itoa(r.Monthly))
@@ -101,8 +115,11 @@ func newForm(cfg *config.Config, cfgPath string, origIdx int) formModel {
 	return m
 }
 
-// fillInputs populates the form controls from an existing sync entry.
-func fillInputs(m *formModel, s config.Sync) {
+// fillInputs populates the form controls from an existing sync entry. defaults
+// resolves the entry's inherited values (local_mode / remove_source_files) so
+// the toggles show what a run would actually do, not just what this entry
+// happens to spell out.
+func fillInputs(m *formModel, s config.Sync, defaults config.Defaults) {
 	m.inputs[fName].SetValue(s.Name)
 	m.inputs[fHost].SetValue(s.Host)
 	if s.Port != 0 {
@@ -113,6 +130,8 @@ func fillInputs(m *formModel, s config.Sync) {
 	m.inputs[fRemote].SetValue(s.RemotePath)
 	m.inputs[fLocal].SetValue(s.LocalPath)
 	m.strict = s.StrictHostKey
+	m.archive = s.IsArchive(defaults)
+	m.removeSrc = s.EffectiveRemoveSourceFiles(defaults)
 	m.ignore.SetValue(strings.Join(s.Ignore, "\n"))
 	if s.Retention != nil {
 		setIntPtr(&m.ret[0], s.Retention.Recent)
@@ -275,10 +294,20 @@ func setIntPtr(ti *textinput.Model, p *int) {
 	}
 }
 
+// checkbox renders a boolean toggle for the form view.
+func checkbox(on bool) string {
+	if on {
+		return "[x]"
+	}
+	return "[ ]"
+}
+
 func (m formModel) snapshot() map[string]string {
 	s := map[string]string{
-		"strict": strconv.FormatBool(m.strict),
-		"ignore": m.ignore.Value(),
+		"strict":    strconv.FormatBool(m.strict),
+		"archive":   strconv.FormatBool(m.archive),
+		"removeSrc": strconv.FormatBool(m.removeSrc),
+		"ignore":    m.ignore.Value(),
 	}
 	for i := range m.inputs {
 		s[fmt.Sprintf("in%d", i)] = m.inputs[i].Value()
@@ -358,6 +387,22 @@ func (m formModel) toSync() (config.Sync, error) {
 		return config.Sync{}, err
 	}
 	s.Retention = ov
+	// Persist the data model as an explicit entry-level value whenever it differs
+	// from what [defaults] would give. Writing it out only on divergence keeps
+	// simple configs clean, while guaranteeing an archive entry can never be
+	// downgraded to a mirror by a later edit to defaults — which would delete the
+	// accumulated archive on the next run.
+	if m.archive != (config.Sync{}).IsArchive(m.cfg.Defaults) {
+		if m.archive {
+			s.LocalMode = config.LocalModeArchive
+		} else {
+			s.LocalMode = config.LocalModeMirror
+		}
+	}
+	if m.removeSrc != (config.Sync{}).EffectiveRemoveSourceFiles(m.cfg.Defaults) {
+		v := m.removeSrc
+		s.RemoveSourceFiles = &v
+	}
 	return s, nil
 }
 
@@ -506,8 +551,28 @@ func (m formModel) Update(msg tea.Msg) (formModel, tea.Cmd) {
 				return m, nil
 			}
 		case " ":
-			if m.focus == focusStrict {
+			switch m.focus {
+			case focusStrict:
 				m.strict = !m.strict
+				return m, nil
+			case focusArchive:
+				m.archive = !m.archive
+				// Leaving archive mode with remote deletion still on would build the
+				// one combination Validate rejects, so clear it here rather than let
+				// the user hit an error on save.
+				if !m.archive && m.removeSrc {
+					m.removeSrc = false
+					m.status = "已同时关闭「删除远端源文件」：镜像模式下该组合会清空备份"
+				}
+				return m, nil
+			case focusRemoveSrc:
+				// Turning remote deletion on implies the archive model; flip it for
+				// the user instead of accepting a state that cannot be saved.
+				if !m.removeSrc && !m.archive {
+					m.archive = true
+					m.status = "已自动切换为归档模式：删除远端源文件要求本地永久归档"
+				}
+				m.removeSrc = !m.removeSrc
 				return m, nil
 			}
 		}
@@ -549,6 +614,10 @@ func (m formModel) View() string {
 		strictMark = "[x]"
 	}
 	b.WriteString(fmt.Sprintf("%-10s %s 严格检查 host key\n", "strict", strictMark))
+	b.WriteString(fmt.Sprintf("%-10s %s 归档模式（current/ 只增不减，不用 --delete）\n",
+		"归档", checkbox(m.archive)))
+	b.WriteString(fmt.Sprintf("%-10s %s 同步成功后删除远端源文件（需归档模式）\n",
+		"清远端", checkbox(m.removeSrc)))
 	b.WriteString("忽略规则 (gitignore 风格, 每行一条):\n" + m.ignore.View() + "\n")
 	b.WriteString(fmt.Sprintf("保留覆盖 recent[%s] monthly[%s] semi[%s] yearly[%s]\n",
 		m.ret[0].View(), m.ret[1].View(), m.ret[2].View(), m.ret[3].View()))
