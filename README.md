@@ -10,13 +10,23 @@
 
 ### 1. 获取可执行文件
 
-需要 Go 1.22+，用仓库自带脚本编译：
+从 [Releases](../../releases) 下载对应架构的静态单文件即可，无需装 Go：
+
+```bash
+# 按需替换版本号与架构（linux-amd64 / linux-arm64 / linux-arm）
+curl -LO https://github.com/noir017/gsyncer/releases/download/v0.1.0/gsyncer-v0.1.0-linux-amd64
+curl -LO https://github.com/noir017/gsyncer/releases/download/v0.1.0/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS      # 校验完整性
+chmod +x gsyncer-v0.1.0-linux-amd64 && mv gsyncer-v0.1.0-linux-amd64 gsyncer
+```
+
+也可以自己编译（需要 Go 1.22+）：
 
 ```bash
 ./build.sh          # 产出 dist/gsyncer（linux/amd64 静态单文件）
 ```
 
-把 `dist/gsyncer` 拷到目标机器即可（无需安装任何依赖）。
+把二进制拷到目标机器即可（无需安装任何依赖）。
 
 > 运行前提：本机装有 `ssh`、`rsync`，远程主机装有 `rsync`。
 
@@ -355,9 +365,26 @@ local_path/
 ./build.sh                        # 默认 dist/gsyncer (linux/amd64)
 ./build.sh /usr/local/bin/gsyncer   # 指定输出路径
 GOARCH=arm64 ./build.sh           # 交叉编译 arm64
+VERSION=1.2.3 ./build.sh          # 把版本号写进 `gsyncer version`
 ```
 
 脚本用 `CGO_ENABLED=0` + `-ldflags "-s -w" -trimpath` 产出静态、精简、可复现的二进制，并自动校验 `ldd` 为 `not a dynamic executable`。也可直接 `CGO_ENABLED=0 go build -o gsyncer .`。
+
+`VERSION` 通过 `-X main.version=` 注入，不填就用源码里的默认值——发版由 CI 自动填入标签名，本地构建不用管。
+
+### 持续集成与发版
+
+仓库同时带了 Gitea（`.gitea/workflows/`）和 GitHub（`.github/workflows/`）两套流水线，检查项一致。
+
+**`ci.yml`** — 推分支或提 PR 时跑：`gofmt` 格式门禁 → `go mod verify` → `go vet ./...` → 静态编译 → `go test -race -count=1 ./...`。产物会作为 artifact 保留 14 天，便于从任意提交取一份能跑的二进制。
+
+**`release.yml`** — 推 `v*` 标签时跑：先用 `workflow_call` 完整复用一遍 `ci.yml`，**测试不过就不会有 Release**；随后交叉编译 `linux/amd64`、`linux/arm64`、`linux/arm`（armv7），把标签名注入版本号，冒烟测试 amd64 产物（确认静态链接且版本号正确），最后连同 `SHA256SUMS` 一起发到 GitHub Releases。
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0     # 触发发版
+```
+
+标签名带 `-` 的（如 `v0.2.0-rc1`）自动标记为预发布，不会顶掉 latest。若某次 Release 创建失败，可用 workflow_dispatch 指定已有标签重跑，产物会覆盖上传而不动已有的说明文字。
 
 ### 运行测试
 
