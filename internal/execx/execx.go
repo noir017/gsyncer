@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 noir017
+
 // Package execx provides an injectable command runner so that callers can be
 // tested without spawning real processes.
 package execx

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 noir017
+
 // Package restore copies a snapshot back out to a destination directory. The
 // logic is factored here (rather than living only in the TUI) so it is usable
 // headlessly from `gsyncer restore` in scripts and disaster-recovery scenarios.

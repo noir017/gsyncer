@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 noir017
+
 // Package snapshot abstracts snapshot creation over hardlink and btrfs backends.
 package snapshot
 

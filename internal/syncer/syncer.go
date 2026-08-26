@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 noir017
+
 // Package syncer orchestrates the per-entry pipeline: preflight, rsync pull,
 // snapshot, and retention prune.
 package syncer

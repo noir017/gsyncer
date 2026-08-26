@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 noir017
+
 // Command gsyncer pulls remote folders over ssh+rsync and keeps GFS snapshots.
 package main
 
@@ -73,6 +76,10 @@ func main() {
 	switch os.Args[1] {
 	case "version":
 		fmt.Println("gsyncer", version)
+		fmt.Println("Copyright (C) 2026 noir017")
+		fmt.Println("License GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>.")
+		fmt.Println("This is free software: you are free to change and redistribute it.")
+		fmt.Println("There is NO WARRANTY, to the extent permitted by law.")
 	case "help", "-h", "--help":
 		usage(os.Stdout)
 	case "sync":

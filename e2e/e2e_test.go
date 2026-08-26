@@ -1,5 +1,8 @@
 //go:build e2e
 
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 noir017
+
 // End-to-end tests that drive the compiled gsyncer binary through its real
 // ssh+rsync pipeline against live servers. They are excluded from the default
 // `go test ./...` by the `e2e` build tag, since they need network access and
