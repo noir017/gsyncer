@@ -1,4 +1,5 @@
 /gsyncer
+/dist/
 /logs/
 /config.toml
 /e2e/e2e.config.toml

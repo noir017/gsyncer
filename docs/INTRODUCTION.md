@@ -27,6 +27,8 @@
 ./gsyncer sync      # 命令行同步全部条目（适合 cron）
 ```
 
+不想自己编译，也可以直接从 [Releases](../../releases) 下载 `linux/amd64`、`arm64`、`arm`(armv7) 的预编译单文件（附 `SHA256SUMS` 可校验）。
+
 运行前提：本机装有 `ssh`、`rsync`，远程主机装有 `rsync`。详细用法见 [README](../README.md)。
 
 ## 技术栈
@@ -69,6 +71,8 @@ It is driven primarily through an **interactive terminal UI (TUI)**, and also sh
 ./gsyncer           # run without args to enter the TUI
 ./gsyncer sync      # sync all entries from the CLI (cron-friendly)
 ```
+
+Prefer not to build it yourself? Prebuilt single binaries for `linux/amd64`, `arm64`, and `arm` (armv7) are attached to each [release](../../releases), along with `SHA256SUMS`.
 
 Prerequisites: `ssh` and `rsync` on the local machine, `rsync` on the remote host. See the [README](../README.md) for full usage.
 
