@@ -191,7 +191,26 @@ func SyncOne(ctx context.Context, s config.Sync, d config.Defaults, deps Deps, d
 	res.Mode = be.Name()
 	deps.Log.Infof("[%s] snapshot mode: %s", s.Name, be.Name())
 
-	out, err := runRsync(ctx, deps, s.Name, buildRsyncArgs(s, port, cur, dryRun, s.EffectiveCompress(d), deps.KnownHostsFile, s.EffectiveBwlimit(d)))
+	archive := s.IsArchive(d)
+	removeSource := s.EffectiveRemoveSourceFiles(d)
+	if archive {
+		// Worth stating in the run log: in this mode current/ is the archive
+		// itself, so an operator reading the log knows the absence of --delete is
+		// intentional rather than a lost flag.
+		deps.Log.Infof("[%s] local mode: archive (current/ accumulates, no --delete)", s.Name)
+	}
+	if removeSource {
+		deps.Log.Infof("[%s] remote source files will be removed after a successful transfer", s.Name)
+	}
+
+	out, err := runRsync(ctx, deps, s.Name, buildRsyncArgs(s, port, cur, deps.KnownHostsFile, rsyncOpts{
+		dryRun:       dryRun,
+		compress:     s.EffectiveCompress(d),
+		bwlimit:      s.EffectiveBwlimit(d),
+		archive:      archive,
+		removeSource: removeSource,
+	}))
+	transferClean := err == nil
 	if err != nil {
 		if rsyncPartialWarning(out.Code) {
 			// 23/24 mean the transfer mostly succeeded (some files failed or
@@ -211,8 +230,28 @@ func SyncOne(ctx context.Context, s config.Sync, d config.Defaults, deps Deps, d
 	deps.Log.Infof("[%s] pulled %d files, %d bytes", s.Name, res.Files, res.Bytes)
 
 	if dryRun {
+		// A preview deletes nothing, anywhere: rsync ran under -n (so no remote
+		// source file was removed), and the remote empty-dir cleanup below is
+		// skipped entirely rather than run in some "safe" form.
 		res.OK = true
 		return res
+	}
+
+	// Sweep the directories --remove-source-files left empty on the remote. Gated
+	// on a clean rsync exit: on a partial transfer (23/24) some files did not make
+	// it across, and while `find -empty` would skip their parents anyway, there is
+	// no reason to run a deletion against a tree we know is in an unexpected state
+	// — the next successful run does the cleanup.
+	if removeSource {
+		if transferClean {
+			if err := pruneRemoteEmptyDirs(ctx, s, port, deps); err != nil {
+				// Already logged in detail by pruneRemoteEmptyDirs; the backup itself
+				// is complete, so this does not fail the entry.
+				deps.Log.Errorf("[%s] leaving remote empty directories in place (backup unaffected)", s.Name)
+			}
+		} else {
+			deps.Log.Infof("[%s] partial transfer; skipping remote empty-dir cleanup", s.Name)
+		}
 	}
 
 	ts := deps.Now()
