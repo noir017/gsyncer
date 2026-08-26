@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 noir017
+
 // Package notify delivers run-completion notifications so an unattended (cron)
 // gsyncer run that fails is not discovered only when a restore is needed. It
 // supports two independent sinks, either or both of which may be configured: an

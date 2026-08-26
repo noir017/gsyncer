@@ -324,3 +324,17 @@ go test -tags e2e ./e2e -v
 字段：`host`（必填）、`user`（必填）、`port`（默认 22）、`identity`（可选，留空则用 ssh 自身的 `~/.ssh/config`）、`remote_base`（可选，测试临时目录的父路径，默认 `/tmp`）。每个用例在远端建独立的临时目录、结束时自动删除；不可达的主机会被单独跳过，所以部分配置也能跑。
 
 代码结构：`internal/config`（配置）、`internal/syncer`（同步流水线）、`internal/snapshot`（硬链接 / btrfs 后端）、`internal/retention`（GFS 策略）、`internal/tui`（界面）、`internal/logx`、`internal/ignore`、`internal/execx`。
+
+---
+
+## 许可证
+
+Copyright (C) 2026 noir017
+
+本项目采用 **GNU 通用公共许可证第 3 版或任意更新版本**（GPL-3.0-or-later）授权。
+
+本程序是自由软件：你可以依照自由软件基金会发布的 GNU 通用公共许可证的条款重新发布和/或修改它，可以选择使用该许可证的第 3 版，或（由你选择）任何更新的版本。
+
+发布本程序是希望它能派上用场，但**不作任何担保**；甚至不包含对**适销性**或**特定用途适用性**的默示担保。详见 GNU 通用公共许可证。
+
+你应当已随本程序收到一份 GNU 通用公共许可证的副本（见仓库中的 [LICENSE](LICENSE) 文件）。如果没有，请查阅 <https://www.gnu.org/licenses/>。

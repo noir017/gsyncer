@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 noir017
+
 // Package ignore translates gitignore-style patterns into ordered rsync filter
 // rules. gitignore is last-match-wins; rsync is first-match-wins, so the order
 // is reversed during translation.

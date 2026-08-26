@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 noir017
+
 // Package logx provides per-run logging, a summary log, and old-log cleanup.
 package logx
 

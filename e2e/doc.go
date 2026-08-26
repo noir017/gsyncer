@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 noir017
+
 // Package e2e holds gsyncer's end-to-end tests: they drive the compiled binary
 // through its real ssh+rsync pipeline against live servers you supply.
 //
