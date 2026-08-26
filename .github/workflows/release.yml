@@ -1,0 +1,111 @@
+name: Release
+
+# 推送 v* 标签时发版：先复用 CI 跑完整的编译+测试，全绿之后才交叉编译多架构
+# 二进制并创建 GitHub Release。测试没过就不会有 Release —— 这是这个文件里最重要
+# 的一条约束，靠 needs: ci 表达。
+on:
+  push:
+    tags: ["v*"]
+  # 允许手动补发某个已存在的标签（比如首次发版时 Release 建失败了）。
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要发布的标签（如 v0.1.0），必须已存在"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  # 完整复用 CI：gofmt / go mod verify / go vet / 竞态测试。
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    name: 构建并发布
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      # 创建 Release 需要写权限；仅在本 job 提权，其余保持只读。
+      contents: write
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          # workflow_dispatch 时 GITHUB_REF 指向分支，需显式检出目标标签。
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: 安装 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: 解析版本号
+        id: ver
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          # 去掉 v 前缀写进二进制，让 `gsyncer version` 打印 0.1.0 而非 v0.1.0。
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: 交叉编译各架构静态单文件
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          # 覆盖常见部署目标：x86 服务器、arm64 SBC/云主机、32 位 armv7 老设备
+          # （归档模式的典型场景就是这类小板子上的监控录像）。
+          for arch in amd64 arm64 arm; do
+            GOARCH="$arch" ./build.sh "dist/gsyncer-$TAG-linux-$arch"
+          done
+          # 校验和随 Release 一起发布，方便下载后核对。
+          ( cd dist && sha256sum gsyncer-* > SHA256SUMS )
+          ls -lh dist
+
+      - name: 冒烟测试 amd64 产物
+        # 发出去的东西至少要能跑起来：确认它确实是静态链接，且版本号已正确注入。
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          bin="dist/gsyncer-$TAG-linux-amd64"
+          chmod +x "$bin"
+          # ldd 对静态二进制会以退出码 1 结束，所以先取输出再判断，
+          # 否则 pipefail 会把这个正常结果当成失败。
+          deps=$(ldd "$bin" 2>&1 || true)
+          case "$deps" in
+            *"not a dynamic executable"*) ;;
+            *) echo "产物不是静态链接:"; echo "$deps"; exit 1 ;;
+          esac
+          # 同样不用管道接 head：提前关闭 stdout 会让被测程序收到 SIGPIPE。
+          out=$("$bin" version)
+          got=${out%%$'\n'*}
+          if [ "$got" != "gsyncer $VERSION" ]; then
+            echo "版本号注入失败: 期望 'gsyncer $VERSION'，实际 '$got'"
+            exit 1
+          fi
+          echo "$got"
+
+      - name: 创建 Release 并上传产物
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # 用预装的 gh CLI 而非第三方 action，少一个供应链依赖。
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            # 手动补发到一个已有 Release：只覆盖产物，不动已写好的说明。
+            echo "Release $TAG 已存在，覆盖上传产物"
+            gh release upload "$TAG" dist/gsyncer-*-linux-* dist/SHA256SUMS --clobber
+          else
+            args=(--generate-notes --title "gsyncer $TAG")
+            # 标签名含 - 的（v0.2.0-rc1）按预发布处理，不会覆盖 latest。
+            case "$TAG" in *-*) args+=(--prerelease) ;; esac
+            gh release create "$TAG" "${args[@]}" dist/gsyncer-*-linux-* dist/SHA256SUMS
+          fi

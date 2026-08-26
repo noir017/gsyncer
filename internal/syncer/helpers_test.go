@@ -49,7 +49,7 @@ func TestBuildRsyncArgs(t *testing.T) {
 	s := config.Sync{
 		User: "u", Host: "h", RemotePath: "/src", Ignore: []string{"*.log"},
 	}
-	args := buildRsyncArgs(s, 22, "/local/current", false, false, "/cfg/known_hosts", 0)
+	args := buildRsyncArgs(s, 22, "/local/current", "/cfg/known_hosts", rsyncOpts{})
 	j := strings.Join(args, " ")
 	if !strings.Contains(j, "-a") || !strings.Contains(j, "--delete") ||
 		!strings.Contains(j, "--info=stats2") || !strings.Contains(j, "--timeout 300") {
@@ -90,14 +90,65 @@ func TestBuildRsyncArgs(t *testing.T) {
 	if strings.Contains(j, "--bwlimit") {
 		t.Fatalf("bwlimit 0 should add no flag: %v", args)
 	}
-	dry := buildRsyncArgs(s, 22, "/local/current", true, false, "/cfg/known_hosts", 0)
+	if contains(args, "--remove-source-files") {
+		t.Fatalf("remove-source-files must be opt-in: %v", args)
+	}
+	dry := buildRsyncArgs(s, 22, "/local/current", "/cfg/known_hosts", rsyncOpts{dryRun: true})
 	if !contains(dry, "-n") {
 		t.Fatalf("dry-run flag missing: %v", dry)
 	}
 	// compress=true adds -z.
-	comp := buildRsyncArgs(s, 22, "/local/current", false, true, "/cfg/known_hosts", 0)
+	comp := buildRsyncArgs(s, 22, "/local/current", "/cfg/known_hosts", rsyncOpts{compress: true})
 	if !contains(comp, "-z") {
 		t.Fatalf("compress flag -z missing when enabled: %v", comp)
+	}
+}
+
+// Archive mode must drop --delete: current/ is the archive, so a file leaving
+// the remote (which, with removeSource, is every file just pulled) must not
+// propagate into the local copy.
+func TestBuildRsyncArgsArchiveDropsDelete(t *testing.T) {
+	s := config.Sync{User: "u", Host: "h", RemotePath: "/src"}
+	args := buildRsyncArgs(s, 22, "/local/current", "", rsyncOpts{archive: true})
+	if contains(args, "--delete") {
+		t.Fatalf("archive mode must not pass --delete: %v", args)
+	}
+	// Everything else about the transfer is unchanged.
+	for _, want := range []string{"-a", "-s", "--numeric-ids", "--partial"} {
+		if !contains(args, want) {
+			t.Fatalf("archive mode dropped %q: %v", want, args)
+		}
+	}
+	// Mirror mode (the zero value) still deletes.
+	if !contains(buildRsyncArgs(s, 22, "/local/current", "", rsyncOpts{}), "--delete") {
+		t.Fatal("mirror mode must keep --delete")
+	}
+}
+
+// Remote source deletion goes through rsync's own --remove-source-files, which
+// deletes a file only once its transfer is verified — no reimplementation of
+// "which files made it across".
+func TestBuildRsyncArgsRemoveSourceFiles(t *testing.T) {
+	s := config.Sync{User: "u", Host: "h", RemotePath: "/src"}
+	args := buildRsyncArgs(s, 22, "/local/current", "", rsyncOpts{archive: true, removeSource: true})
+	if !contains(args, "--remove-source-files") {
+		t.Fatalf("missing --remove-source-files: %v", args)
+	}
+	if contains(args, "--delete") {
+		t.Fatalf("archive + remove-source must not pass --delete: %v", args)
+	}
+}
+
+// A dry run must be read-only on the remote too: -n makes rsync's own
+// --remove-source-files a no-op, so the preview reports what it would delete
+// without deleting it.
+func TestBuildRsyncArgsDryRunRemoveSourceIsNoOp(t *testing.T) {
+	s := config.Sync{User: "u", Host: "h", RemotePath: "/src"}
+	args := buildRsyncArgs(s, 22, "/local/current", "", rsyncOpts{
+		archive: true, removeSource: true, dryRun: true,
+	})
+	if !contains(args, "-n") {
+		t.Fatalf("dry-run must pass -n so --remove-source-files does not delete: %v", args)
 	}
 }
 
@@ -121,7 +172,7 @@ func TestEffectiveCompress(t *testing.T) {
 
 func TestBuildRsyncArgsBwlimit(t *testing.T) {
 	s := config.Sync{User: "u", Host: "h", RemotePath: "/src"}
-	args := buildRsyncArgs(s, 22, "/local/current", false, false, "", 500)
+	args := buildRsyncArgs(s, 22, "/local/current", "", rsyncOpts{bwlimit: 500})
 	if !strings.Contains(strings.Join(args, " "), "--bwlimit 500") {
 		t.Fatalf("bwlimit not passed through: %v", args)
 	}

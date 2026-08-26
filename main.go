@@ -32,7 +32,13 @@ func signalCtx() (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 }
 
-const version = "0.1.0"
+// version is the release identifier printed by `gsyncer version`. It is a var,
+// not a const, so a release build can stamp the git tag into it:
+//
+//	go build -ldflags "-X main.version=1.2.3"
+//
+// The literal here is the fallback for a plain `go build` (and for tests).
+var version = "0.1.0"
 
 func exeDir() string {
 	p, err := os.Executable()

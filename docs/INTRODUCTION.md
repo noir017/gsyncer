@@ -11,6 +11,7 @@
 ## 核心特性
 
 - **增量拉取**：基于 `rsync -a --delete`，支持忽略规则、断点续传（`--partial`）、传输压缩与限速。
+- **镜像 / 归档双数据模型**：默认镜像（`current/` 恒等于远端）；也可切到归档模式，`current/` 只增不减，并在传输成功后删除远端源文件——适合"远端是滚动窗口、本地是永久归档"的场景（如磁盘装不下自己历史的监控录像）。归档模式下删快照不丢数据，GFS 保留策略因此恢复正常语义。
 - **时间点快照**：每次同步生成一份历史快照，可随时浏览、恢复或删除。
 - **省空间后端**：默认硬链接（未改动文件共享 inode）；在 CoW 文件系统上自动升级为 reflink；btrfs 上使用子卷快照。
 - **GFS 保留策略**：按 recent / monthly / semiannual / yearly 四层并集自动清理，始终保留最新一份。
@@ -25,6 +26,8 @@
 ./gsyncer           # 无参数启动进入 TUI
 ./gsyncer sync      # 命令行同步全部条目（适合 cron）
 ```
+
+不想自己编译，也可以直接从 [Releases](../../releases) 下载 `linux/amd64`、`arm64`、`arm`(armv7) 的预编译单文件（附 `SHA256SUMS` 可校验）。
 
 运行前提：本机装有 `ssh`、`rsync`，远程主机装有 `rsync`。详细用法见 [README](../README.md)。
 
@@ -53,6 +56,7 @@ It is driven primarily through an **interactive terminal UI (TUI)**, and also sh
 ## Key Features
 
 - **Incremental pull** — built on `rsync -a --delete`, with ignore rules, resumable transfers (`--partial`), compression, and bandwidth limiting.
+- **Mirror or archive** — mirrors the remote by default; or switch to archive mode, where `current/` only ever grows and remote source files are deleted once safely transferred. This fits the "rolling window on the remote, permanent archive locally" case (e.g. camera footage on a disk too small to hold its own history). In archive mode deleting a snapshot loses no data, so GFS retention regains its normal meaning.
 - **Point-in-time snapshots** — each sync produces a historical snapshot you can browse, restore, or delete at any time.
 - **Space-efficient backends** — hardlink by default (unchanged files share inodes); auto-upgrades to reflink on CoW filesystems; uses subvolume snapshots on btrfs.
 - **GFS retention** — automatically prunes via the union of recent / monthly / semiannual / yearly tiers, always keeping the latest snapshot.
@@ -67,6 +71,8 @@ It is driven primarily through an **interactive terminal UI (TUI)**, and also sh
 ./gsyncer           # run without args to enter the TUI
 ./gsyncer sync      # sync all entries from the CLI (cron-friendly)
 ```
+
+Prefer not to build it yourself? Prebuilt single binaries for `linux/amd64`, `arm64`, and `arm` (armv7) are attached to each [release](../../releases), along with `SHA256SUMS`.
 
 Prerequisites: `ssh` and `rsync` on the local machine, `rsync` on the remote host. See the [README](../README.md) for full usage.
 
