@@ -7,7 +7,27 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 )
+
+// A cancelled command whose grandchild still holds the output pipes (ssh's
+// ProxyCommand, in production) must not block Run until the grandchild exits.
+func TestRealRunTimeoutNotHeldByGrandchild(t *testing.T) {
+	old := waitDelay
+	waitDelay = 200 * time.Millisecond
+	defer func() { waitDelay = old }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := Real{}.Run(ctx, "sh", "-c", "sleep 30 & sleep 30")
+	if err == nil {
+		t.Fatal("expected the timed-out command to fail")
+	}
+	if el := time.Since(start); el > 5*time.Second {
+		t.Fatalf("Run returned after %v; the grandchild kept it waiting", el)
+	}
+}
 
 func TestRealRunCapturesStdout(t *testing.T) {
 	var r Real

@@ -15,6 +15,7 @@
 - **时间点快照**：每次同步生成一份历史快照，可随时浏览、恢复或删除。
 - **省空间后端**：默认硬链接（未改动文件共享 inode）；在 CoW 文件系统上自动升级为 reflink；btrfs 上使用子卷快照。
 - **GFS 保留策略**：按 recent / monthly / semiannual / yearly 四层并集自动清理，始终保留最新一份。
+- **按条目排程 + 不在线处理**：每个条目可设自己的 cron 排程，cron 只需每分钟调一次 `gsyncer tick`；到点时主机不在线可选照常同步（失败报警）、稍后重试或跳过本次——适合会关机的笔记本、办公电脑。
 - **双操作模式**：TUI 交互操作 + 命令行子命令（`sync` / `status` / `prune` / `restore` 等），后者适合自动化。
 - **同步钩子与通知**：支持 `pre_sync` / `post_sync` 命令以及 webhook / 命令行通知。
 - **零依赖单文件**：`CGO_ENABLED=0` 静态编译，`-s -w -trimpath` 精简且可复现，支持交叉编译。
@@ -60,6 +61,7 @@ It is driven primarily through an **interactive terminal UI (TUI)**, and also sh
 - **Point-in-time snapshots** — each sync produces a historical snapshot you can browse, restore, or delete at any time.
 - **Space-efficient backends** — hardlink by default (unchanged files share inodes); auto-upgrades to reflink on CoW filesystems; uses subvolume snapshots on btrfs.
 - **GFS retention** — automatically prunes via the union of recent / monthly / semiannual / yearly tiers, always keeping the latest snapshot.
+- **Per-entry schedules with offline handling** — each entry can carry its own cron schedule, with cron calling `gsyncer tick` once a minute; when a host is unreachable at its time, choose to sync anyway (and alert on failure), retry later, or skip that run — a fit for laptops and office machines that are not always on.
 - **Dual operation modes** — interactive TUI plus CLI subcommands (`sync` / `status` / `prune` / `restore`, etc.) suited for automation.
 - **Sync hooks & notifications** — `pre_sync` / `post_sync` commands, plus webhook or command-based notifications.
 - **Single static binary** — `CGO_ENABLED=0` static build, stripped and reproducible via `-s -w -trimpath`, with cross-compilation support.

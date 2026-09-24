@@ -25,32 +25,49 @@ const (
 	fIdentity
 	fRemote
 	fLocal
+	fSchedule
 	numInputs
 )
 
+// inputLabels label the text inputs, indexed like them.
+var inputLabels = []string{"名称", "主机", "端口", "用户", "密钥", "远程路径", "本地路径", "排程"}
+
 // focus slots: inputs (0..numInputs-1), strict toggle, the two data-model
-// toggles, ignore textarea, ret[0..3].
+// toggles, the offline-policy selector and its retry interval, ignore
+// textarea, ret[0..3].
 const (
 	focusStrict    = numInputs
 	focusArchive   = numInputs + 1
 	focusRemoveSrc = numInputs + 2
-	focusIgnore    = numInputs + 3
-	focusRet0      = numInputs + 4
+	focusOffline   = numInputs + 3
+	focusRetry     = numInputs + 4
+	focusIgnore    = numInputs + 5
+	focusRet0      = numInputs + 6
 	numFocus       = focusRet0 + 4
 	// focusPaste is an extra slot only present for new entries (origIdx < 0).
 	focusPaste = numFocus
 )
+
+// offlineChoices is the order the offline selector cycles through.
+var offlineChoices = []string{config.OfflineForce, config.OfflineRetry, config.OfflineSkip}
 
 type formModel struct {
 	cfg     *config.Config
 	cfgPath string
 	origIdx int // -1 == new
 
+	// base is the entry the form was opened from (zero for a new one). toSync
+	// starts from it, so settings the form has no control for — compress,
+	// bwlimit, hooks, offline_retry_limit — survive an edit instead of being
+	// silently dropped.
+	base config.Sync
+
 	width, height int
 
 	inputs []textinput.Model // numInputs
 	ignore textarea.Model
 	ret    []textinput.Model // 4: recent, monthly, semiannual, yearly
+	retry  textinput.Model   // offline_retry_interval
 	paste  textinput.Model   // quick-entry parser (new entries only)
 	strict bool
 	// archive / removeSrc mirror the entry's local_mode and remove_source_files.
@@ -59,7 +76,9 @@ type formModel struct {
 	// explicit override back only when the choice differs from the default.
 	archive   bool
 	removeSrc bool
-	focus     int
+	// offline is the effective on_offline, handled the same way.
+	offline string
+	focus   int
 
 	initial map[string]string // snapshot for dirty detection
 	status  string
@@ -70,14 +89,14 @@ type formModel struct {
 }
 
 func newForm(cfg *config.Config, cfgPath string, origIdx int) formModel {
-	labels := []string{"名称", "主机", "端口", "用户", "密钥", "远程路径", "本地路径"}
 	m := formModel{cfg: cfg, cfgPath: cfgPath, origIdx: origIdx, focus: 0}
 	m.inputs = make([]textinput.Model, numInputs)
 	for i := range m.inputs {
 		ti := textinput.New()
-		ti.Placeholder = labels[i]
+		ti.Placeholder = inputLabels[i]
 		m.inputs[i] = ti
 	}
+	m.inputs[fSchedule].Placeholder = schedulePlaceholder(cfg.Defaults)
 	m.ignore = textarea.New()
 	m.ignore.SetWidth(40)
 	m.ignore.SetHeight(6)
@@ -87,11 +106,14 @@ func newForm(cfg *config.Config, cfgPath string, origIdx int) formModel {
 		ti.CharLimit = 6
 		m.ret[i] = ti
 	}
+	m.retry = textinput.New()
+	m.retry.Placeholder = retryPlaceholder(cfg.Defaults)
 	m.paste = textinput.New()
 	m.paste.Placeholder = "user@host:/远程路径  或  host=.. user=.. remote=.. local=.."
 
 	if origIdx >= 0 && origIdx < len(cfg.Sync) {
 		s := cfg.Sync[origIdx]
+		m.base = s
 		fillInputs(&m, s, cfg.Defaults)
 	} else {
 		// new entry: seed sensible defaults so not every field is manual.
@@ -102,6 +124,7 @@ func newForm(cfg *config.Config, cfgPath string, origIdx int) formModel {
 		// created as a mirror).
 		m.archive = (config.Sync{}).IsArchive(cfg.Defaults)
 		m.removeSrc = (config.Sync{}).EffectiveRemoveSourceFiles(cfg.Defaults)
+		m.offline = (config.Sync{}).EffectiveOnOffline(cfg.Defaults)
 		r := defaultRetention(cfg.Defaults)
 		m.ret[0].SetValue(strconv.Itoa(r.Recent))
 		m.ret[1].SetValue(strconv.Itoa(r.Monthly))
@@ -129,9 +152,12 @@ func fillInputs(m *formModel, s config.Sync, defaults config.Defaults) {
 	m.inputs[fIdentity].SetValue(s.Identity)
 	m.inputs[fRemote].SetValue(s.RemotePath)
 	m.inputs[fLocal].SetValue(s.LocalPath)
+	m.inputs[fSchedule].SetValue(s.Schedule)
 	m.strict = s.StrictHostKey
 	m.archive = s.IsArchive(defaults)
 	m.removeSrc = s.EffectiveRemoveSourceFiles(defaults)
+	m.offline = s.EffectiveOnOffline(defaults)
+	m.retry.SetValue(s.OfflineRetryInterval)
 	m.ignore.SetValue(strings.Join(s.Ignore, "\n"))
 	if s.Retention != nil {
 		setIntPtr(&m.ret[0], s.Retention.Recent)
@@ -147,6 +173,42 @@ func defaultPort(d config.Defaults) int {
 		return d.SSHPort
 	}
 	return 22
+}
+
+// schedulePlaceholder says what an empty schedule field means under d.
+func schedulePlaceholder(d config.Defaults) string {
+	if s := strings.TrimSpace(d.Schedule); s != "" && s != config.ScheduleManual {
+		return "留空=继承默认 " + s + "；manual=仅手动；如 0 16 * * 1"
+	}
+	return "cron 5 字段，如 0 16 * * 1；留空=仅手动"
+}
+
+// retryPlaceholder says what an empty retry interval means under d.
+func retryPlaceholder(d config.Defaults) string {
+	iv := (config.Sync{}).EffectiveOfflineRetryInterval(d)
+	return "留空=继承 " + config.FormatDuration(iv) + "；如 30m、24h"
+}
+
+// nextOffline returns the choice after cur in offlineChoices.
+func nextOffline(cur string) string {
+	for i, c := range offlineChoices {
+		if c == cur {
+			return offlineChoices[(i+1)%len(offlineChoices)]
+		}
+	}
+	return offlineChoices[0]
+}
+
+// offlineHint explains the selected offline policy in the form view.
+func offlineHint(p string) string {
+	switch p {
+	case config.OfflineRetry:
+		return "主机不在线时按重试间隔重试，直到成功或下一个排程点"
+	case config.OfflineSkip:
+		return "主机不在线时跳过本次，等下一个排程点"
+	default:
+		return "不探测，到点照常同步（连不上即失败报警）"
+	}
 }
 
 // defaultRetention resolves the retention values to pre-fill for a new entry:
@@ -307,6 +369,8 @@ func (m formModel) snapshot() map[string]string {
 		"strict":    strconv.FormatBool(m.strict),
 		"archive":   strconv.FormatBool(m.archive),
 		"removeSrc": strconv.FormatBool(m.removeSrc),
+		"offline":   m.offline,
+		"retry":     m.retry.Value(),
 		"ignore":    m.ignore.Value(),
 	}
 	for i := range m.inputs {
@@ -365,16 +429,20 @@ func (m formModel) retentionOverride() (*config.RetentionOverride, error) {
 }
 
 func (m formModel) toSync() (config.Sync, error) {
-	s := config.Sync{
-		Name:          strings.TrimSpace(m.inputs[fName].Value()),
-		Host:          strings.TrimSpace(m.inputs[fHost].Value()),
-		User:          strings.TrimSpace(m.inputs[fUser].Value()),
-		Identity:      strings.TrimSpace(m.inputs[fIdentity].Value()),
-		RemotePath:    strings.TrimSpace(m.inputs[fRemote].Value()),
-		LocalPath:     strings.TrimSpace(m.inputs[fLocal].Value()),
-		StrictHostKey: m.strict,
-		Ignore:        splitLines(m.ignore.Value()),
-	}
+	// Start from the entry being edited so fields without a form control carry
+	// over; every field the form does control is overwritten below.
+	s := m.base
+	s.Name = strings.TrimSpace(m.inputs[fName].Value())
+	s.Host = strings.TrimSpace(m.inputs[fHost].Value())
+	s.User = strings.TrimSpace(m.inputs[fUser].Value())
+	s.Identity = strings.TrimSpace(m.inputs[fIdentity].Value())
+	s.RemotePath = strings.TrimSpace(m.inputs[fRemote].Value())
+	s.LocalPath = strings.TrimSpace(m.inputs[fLocal].Value())
+	s.Schedule = strings.TrimSpace(m.inputs[fSchedule].Value())
+	s.OfflineRetryInterval = strings.TrimSpace(m.retry.Value())
+	s.StrictHostKey = m.strict
+	s.Ignore = splitLines(m.ignore.Value())
+	s.Port = 0
 	if v := strings.TrimSpace(m.inputs[fPort].Value()); v != "" {
 		p, err := strconv.Atoi(v)
 		if err != nil {
@@ -392,6 +460,7 @@ func (m formModel) toSync() (config.Sync, error) {
 	// simple configs clean, while guaranteeing an archive entry can never be
 	// downgraded to a mirror by a later edit to defaults — which would delete the
 	// accumulated archive on the next run.
+	s.LocalMode = ""
 	if m.archive != (config.Sync{}).IsArchive(m.cfg.Defaults) {
 		if m.archive {
 			s.LocalMode = config.LocalModeArchive
@@ -399,9 +468,14 @@ func (m formModel) toSync() (config.Sync, error) {
 			s.LocalMode = config.LocalModeMirror
 		}
 	}
+	s.RemoveSourceFiles = nil
 	if m.removeSrc != (config.Sync{}).EffectiveRemoveSourceFiles(m.cfg.Defaults) {
 		v := m.removeSrc
 		s.RemoveSourceFiles = &v
+	}
+	s.OnOffline = ""
+	if m.offline != (config.Sync{}).EffectiveOnOffline(m.cfg.Defaults) {
+		s.OnOffline = m.offline
 	}
 	return s, nil
 }
@@ -455,6 +529,11 @@ func (m *formModel) applyFocus() {
 	} else {
 		m.ignore.Blur()
 	}
+	if m.focus == focusRetry {
+		m.retry.Focus()
+	} else {
+		m.retry.Blur()
+	}
 	if m.focus == focusPaste {
 		m.paste.Focus()
 	} else {
@@ -475,9 +554,10 @@ func (m *formModel) applySize() {
 		m.inputs[i].Width = inW
 	}
 	m.paste.Width = inW
+	m.retry.Width = inW
 	m.ignore.SetWidth(clampMin(m.width-4, 20))
 	if m.height > 0 {
-		m.ignore.SetHeight(clampMin(m.height-16, 3))
+		m.ignore.SetHeight(clampMin(m.height-19, 3))
 	}
 }
 
@@ -574,6 +654,9 @@ func (m formModel) Update(msg tea.Msg) (formModel, tea.Cmd) {
 				}
 				m.removeSrc = !m.removeSrc
 				return m, nil
+			case focusOffline:
+				m.offline = nextOffline(m.offline)
+				return m, nil
 			}
 		}
 	}
@@ -585,6 +668,8 @@ func (m formModel) Update(msg tea.Msg) (formModel, tea.Cmd) {
 		m.paste, cmd = m.paste.Update(msg)
 	case m.focus < numInputs:
 		m.inputs[m.focus], cmd = m.inputs[m.focus].Update(msg)
+	case m.focus == focusRetry:
+		m.retry, cmd = m.retry.Update(msg)
 	case m.focus == focusIgnore:
 		m.ignore, cmd = m.ignore.Update(msg)
 	case m.focus >= focusRet0:
@@ -605,9 +690,8 @@ func (m formModel) View() string {
 		b.WriteString(fmt.Sprintf("%-10s %s\n", "快速粘贴", m.paste.View()))
 		b.WriteString(styleHelp.Render("  ↑ 在此粘贴连接串后按 enter 自动解析填充") + "\n\n")
 	}
-	labels := []string{"名称", "主机", "端口", "用户", "密钥", "远程路径", "本地路径"}
 	for i := range m.inputs {
-		b.WriteString(fmt.Sprintf("%-10s %s\n", labels[i], m.inputs[i].View()))
+		b.WriteString(fmt.Sprintf("%-10s %s\n", inputLabels[i], m.inputs[i].View()))
 	}
 	strictMark := "[ ]"
 	if m.strict {
@@ -618,6 +702,8 @@ func (m formModel) View() string {
 		"归档", checkbox(m.archive)))
 	b.WriteString(fmt.Sprintf("%-10s %s 同步成功后删除远端源文件（需归档模式）\n",
 		"清远端", checkbox(m.removeSrc)))
+	b.WriteString(fmt.Sprintf("%-10s <%s> %s（空格切换）\n", "不在线", m.offline, offlineHint(m.offline)))
+	b.WriteString(fmt.Sprintf("%-10s %s\n", "重试间隔", m.retry.View()))
 	b.WriteString("忽略规则 (gitignore 风格, 每行一条):\n" + m.ignore.View() + "\n")
 	b.WriteString(fmt.Sprintf("保留覆盖 recent[%s] monthly[%s] semi[%s] yearly[%s]\n",
 		m.ret[0].View(), m.ret[1].View(), m.ret[2].View(), m.ret[3].View()))
