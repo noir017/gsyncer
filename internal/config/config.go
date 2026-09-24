@@ -12,8 +12,11 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
+
+	"gsyncer/internal/schedule"
 )
 
 // Local-side data models. They decide one thing only: whether rsync is allowed
@@ -33,6 +36,35 @@ const (
 	LocalModeArchive = "archive"
 )
 
+// What a scheduled run (`gsyncer tick`) does when the host cannot be reached.
+//
+//   - OfflineForce (default) does not probe: the sync starts on time and an
+//     unreachable host fails it like any other error, which alerts. Right for
+//     always-on servers, where "offline" is itself the incident.
+//   - OfflineRetry probes first and, if the host is unreachable, tries again
+//     after offline_retry_interval until it succeeds, offline_retry_limit is
+//     spent, or the next scheduled occurrence takes over. Giving up alerts.
+//   - OfflineSkip probes first and silently drops the occurrence.
+//
+// Manual `gsyncer sync` never consults this: a sync you asked for runs now.
+const (
+	OfflineForce = "force"
+	OfflineRetry = "retry"
+	OfflineSkip  = "skip"
+)
+
+// ScheduleManual as an entry's schedule opts it out of an inherited
+// defaults.schedule, leaving it for manual `gsyncer sync` only.
+const ScheduleManual = "manual"
+
+// DefaultOfflineRetryInterval applies when on_offline = "retry" names no
+// interval. minOfflineRetryInterval is the tick granularity: `gsyncer tick`
+// runs once a minute, so anything finer cannot be honoured.
+const (
+	DefaultOfflineRetryInterval = 30 * time.Minute
+	minOfflineRetryInterval     = time.Minute
+)
+
 // StarterTemplate is a commented example config written by `gsyncer init`. It
 // decodes to a valid, empty-of-entries config (so `gsyncer list` works right
 // after init); users uncomment the [[sync]] block to add their first entry.
@@ -42,6 +74,11 @@ const StarterTemplate = `# gsyncer 配置文件
 
 [defaults]
   ssh_port = 22                    # 未在条目中指定时使用的默认 SSH 端口
+
+  # 排程：由 cron 每分钟调用一次 gsyncer tick，到点的条目才会同步（条目可覆盖）。
+  # schedule   = "5 3 * * 2"       # 标准 5 字段 cron，按本机时区；不设 = 仅手动同步
+  # on_offline = "force"           # 到点时主机不在线：force 照常同步（失败即报警，默认）
+  #                                #   retry 按 offline_retry_interval 重试 / skip 跳过本次
 
   [defaults.retention]             # 默认 GFS 保留策略（条目可覆盖）
     recent     = 7                 # 保留最近的 7 份快照
@@ -79,6 +116,18 @@ const StarterTemplate = `# gsyncer 配置文件
 #   local_path  = "/data/backups/cam"
 #   local_mode          = "archive"     # current/ 不做 --delete，只增不减
 #   remove_source_files = true          # 传输成功后删除远端源文件，腾出空间
+
+# --- 不常在线的主机示例：笔记本每周一 16:00 备份，关机就每天 16:00 重试 ---
+# [[sync]]
+#   name        = "laptop-docs"
+#   host        = "192.168.1.60"
+#   user        = "me"
+#   remote_path = "/home/me/docs"
+#   local_path  = "/data/backups/laptop-docs"
+#   schedule    = "0 16 * * 1"          # 覆盖 defaults.schedule；"manual" = 仅手动
+#   on_offline  = "retry"               # 不在线就重试，直到成功或下一个排程点到来
+#   offline_retry_interval = "24h"      # 重试间隔（Go 时长：30m、2h、24h）
+#   offline_retry_limit    = 0          # 每次排程最多重试几次；0 = 不限
 `
 
 // Retention is the resolved keep-count for each layer.
@@ -137,7 +186,20 @@ type Defaults struct {
 	LocalMode string `toml:"local_mode"`
 	// RemoveSourceFiles is the default for deleting remote source files after a
 	// successful transfer. Off unless explicitly enabled.
-	RemoveSourceFiles bool      `toml:"remove_source_files"`
+	RemoveSourceFiles bool `toml:"remove_source_files"`
+	// Schedule is the default cron expression (5 fields, local time) on which
+	// `gsyncer tick` runs entries; "" leaves entries without their own schedule
+	// manual-only.
+	Schedule string `toml:"schedule"`
+	// OnOffline is the default offline handling for scheduled runs
+	// (OfflineForce / OfflineRetry / OfflineSkip); "" means force.
+	OnOffline string `toml:"on_offline"`
+	// OfflineRetryInterval is a Go duration ("30m", "24h"); "" means
+	// DefaultOfflineRetryInterval.
+	OfflineRetryInterval string `toml:"offline_retry_interval"`
+	// OfflineRetryLimit caps retries per scheduled occurrence; 0 keeps retrying
+	// until the next occurrence.
+	OfflineRetryLimit int       `toml:"offline_retry_limit"`
 	Retention         Retention `toml:"retention"`
 }
 
@@ -174,6 +236,15 @@ type Sync struct {
 	// successfully transferred, for remotes too small to hold their own history.
 	// nil inherits defaults.remove_source_files.
 	RemoveSourceFiles *bool `toml:"remove_source_files"`
+	// Schedule overrides defaults.schedule; "" inherits, ScheduleManual opts out.
+	Schedule string `toml:"schedule"`
+	// OnOffline overrides defaults.on_offline; "" inherits.
+	OnOffline string `toml:"on_offline"`
+	// OfflineRetryInterval overrides defaults.offline_retry_interval; "" inherits.
+	OfflineRetryInterval string `toml:"offline_retry_interval"`
+	// OfflineRetryLimit overrides defaults.offline_retry_limit; nil inherits (a
+	// pointer so an entry can override a default limit back to 0 = unlimited).
+	OfflineRetryLimit *int `toml:"offline_retry_limit"`
 }
 
 // Config is the whole file.
@@ -379,6 +450,20 @@ func (c *Config) Validate() error {
 			return err
 		}
 	}
+	if err := checkScheduling("defaults", c.Defaults.Schedule, c.Defaults.OnOffline,
+		c.Defaults.OfflineRetryInterval, c.Defaults.OfflineRetryLimit); err != nil {
+		return err
+	}
+	for _, s := range c.Sync {
+		limit := 0
+		if s.OfflineRetryLimit != nil {
+			limit = *s.OfflineRetryLimit
+		}
+		if err := checkScheduling(fmt.Sprintf("sync %q", s.Name), s.Schedule, s.OnOffline,
+			s.OfflineRetryInterval, limit); err != nil {
+			return err
+		}
+	}
 	if w := c.Notify.Webhook; w != "" {
 		// The webhook URL is used verbatim in an HTTP request; reject control
 		// characters (CR/LF could enable header/request smuggling) and require an
@@ -389,6 +474,38 @@ func (c *Config) Validate() error {
 		if !strings.HasPrefix(w, "http://") && !strings.HasPrefix(w, "https://") {
 			return fmt.Errorf("notify: webhook must start with http:// or https://, got %q", w)
 		}
+	}
+	return nil
+}
+
+// checkScheduling validates one scope's (defaults or an entry's) scheduling
+// fields as written. Each field is checked where it appears, so a typo in
+// [defaults] surfaces even when every entry happens to override it.
+func checkScheduling(ctx, sched, onOffline, interval string, limit int) error {
+	if e := strings.TrimSpace(sched); e != "" && e != ScheduleManual {
+		if _, err := schedule.Parse(e); err != nil {
+			return fmt.Errorf("%s: %v (want a 5-field cron expression such as \"0 16 * * 1\", or %q)",
+				ctx, err, ScheduleManual)
+		}
+	}
+	switch onOffline {
+	case "", OfflineForce, OfflineRetry, OfflineSkip:
+	default:
+		return fmt.Errorf("%s: on_offline must be %q, %q or %q, got %q",
+			ctx, OfflineForce, OfflineRetry, OfflineSkip, onOffline)
+	}
+	if interval != "" {
+		d, err := time.ParseDuration(interval)
+		if err != nil {
+			return fmt.Errorf("%s: offline_retry_interval %q is not a duration (e.g. \"30m\", \"24h\")", ctx, interval)
+		}
+		if d < minOfflineRetryInterval {
+			return fmt.Errorf("%s: offline_retry_interval must be at least %v (scheduled runs are checked once a minute), got %q",
+				ctx, minOfflineRetryInterval, interval)
+		}
+	}
+	if limit < 0 {
+		return fmt.Errorf("%s: offline_retry_limit must be >= 0", ctx)
 	}
 	return nil
 }
@@ -496,6 +613,70 @@ func (s Sync) EffectiveRemoveSourceFiles(d Defaults) bool {
 		return *s.RemoveSourceFiles
 	}
 	return d.RemoveSourceFiles
+}
+
+// EffectiveSchedule resolves the cron expression `gsyncer tick` runs this entry
+// on: entry > defaults. "" means manual-only — nothing configured, or the entry
+// opted out with ScheduleManual.
+func (s Sync) EffectiveSchedule(d Defaults) string {
+	v := strings.TrimSpace(s.Schedule)
+	if v == "" {
+		v = strings.TrimSpace(d.Schedule)
+	}
+	if v == ScheduleManual {
+		return ""
+	}
+	return v
+}
+
+// EffectiveOnOffline resolves the offline handling: entry > defaults > force.
+func (s Sync) EffectiveOnOffline(d Defaults) string {
+	if s.OnOffline != "" {
+		return s.OnOffline
+	}
+	if d.OnOffline != "" {
+		return d.OnOffline
+	}
+	return OfflineForce
+}
+
+// EffectiveOfflineRetryInterval resolves the retry spacing: entry > defaults >
+// DefaultOfflineRetryInterval. Validate has already rejected unparseable
+// values, so a parse failure here can only mean an unvalidated config and
+// falls back to the default rather than a zero step.
+func (s Sync) EffectiveOfflineRetryInterval(d Defaults) time.Duration {
+	for _, v := range []string{s.OfflineRetryInterval, d.OfflineRetryInterval} {
+		if v == "" {
+			continue
+		}
+		if iv, err := time.ParseDuration(v); err == nil && iv >= minOfflineRetryInterval {
+			return iv
+		}
+		break
+	}
+	return DefaultOfflineRetryInterval
+}
+
+// EffectiveOfflineRetryLimit resolves the per-occurrence retry cap: entry >
+// defaults. Zero means retry until the next occurrence.
+func (s Sync) EffectiveOfflineRetryLimit(d Defaults) int {
+	if s.OfflineRetryLimit != nil {
+		return *s.OfflineRetryLimit
+	}
+	return d.OfflineRetryLimit
+}
+
+// FormatDuration renders d the way it would be written in the config — "24h",
+// "30m", "1h30m" — rather than Go's "24h0m0s".
+func FormatDuration(d time.Duration) string {
+	s := d.String()
+	if strings.HasSuffix(s, "m0s") {
+		s = strings.TrimSuffix(s, "0s")
+	}
+	if strings.HasSuffix(s, "h0m") {
+		s = strings.TrimSuffix(s, "0m")
+	}
+	return s
 }
 
 // EffectiveRetention merges the entry override over defaults.
