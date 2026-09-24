@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"time"
 )
 
 // Result holds the captured output of a command.
@@ -42,6 +43,14 @@ type StreamRunner interface {
 // Real runs commands via os/exec.
 type Real struct{}
 
+// waitDelay bounds how long a command may keep us waiting after its context
+// is done. Cancelling kills only the direct child; a grandchild that inherited
+// its output pipes — ssh's ProxyCommand (e.g. `tsh proxy ssh`) is the case that
+// matters — keeps them open, and without a bound Wait blocks until that
+// grandchild exits on its own, making every timeout here a suggestion. A var
+// so tests can shorten it.
+var waitDelay = 5 * time.Second
+
 // Run implements Runner.
 func (r Real) Run(ctx context.Context, name string, args ...string) (Result, error) {
 	return r.RunEnv(ctx, nil, name, args...)
@@ -50,6 +59,7 @@ func (r Real) Run(ctx context.Context, name string, args ...string) (Result, err
 // RunEnv implements Runner.
 func (Real) RunEnv(ctx context.Context, env []string, name string, args ...string) (Result, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = waitDelay
 	// Force the C locale so tool output (notably rsync --stats labels and
 	// number formatting) is stable and parseable regardless of the host locale.
 	// Caller-supplied env comes last so a hook may still override it if needed.
@@ -72,6 +82,7 @@ func (Real) RunEnv(ctx context.Context, env []string, name string, args ...strin
 // with a carriage return (rsync --info=progress2) surface as discrete updates.
 func (Real) RunStream(ctx context.Context, onLine func(string), name string, args ...string) (Result, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = waitDelay
 	// Match Run: force the C locale so output labels/number formatting are stable.
 	cmd.Env = append(os.Environ(), "LC_ALL=C")
 	stdout, err := cmd.StdoutPipe()
