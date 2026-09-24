@@ -97,6 +97,9 @@ name=web host=example.com user=deploy remote=/srv/www local=/data/web
 - 新增条目会预填默认端口、常见忽略规则、保留策略；
 - `空格` 切换 strict host key、「归档」与「清远端」三个开关；两个数据模型开关会互相
   联动，避免拼出「镜像 + 删远端源」这个会毁掉备份的组合；
+- 「排程」填 cron 表达式（留空继承默认），「不在线」一栏用 `空格` 在 force / retry / skip
+  之间切换，「重试间隔」填 `30m`、`24h` 这类时长；
+- 表单里没有的设置（`compress`、`bwlimit`、钩子、`offline_retry_limit` 等）编辑保存后原样保留；
 - `ctrl+s` 保存；`esc` 取消（有未保存改动会先提示）。
 
 ### 快照浏览
@@ -119,9 +122,13 @@ gsyncer sync --server example.com  # 只同步该主机上的条目
 gsyncer sync --dry-run             # rsync -n 预演，不写入、不快照
 gsyncer sync --jobs 4              # 并发同步条目数（覆盖 defaults.jobs）
 
+gsyncer tick                       # 只跑「到点」的排程条目，供 cron 每分钟调用（见下文）
+gsyncer tick --dry-run             # 只显示哪些条目到点、探测结果与打算怎么做，不改任何东西
+gsyncer tick --name laptop         # 只看 / 只跑某一个条目
+
 gsyncer list                       # 列出所有条目
 gsyncer snapshots --name web       # 列出某条目的所有快照时间戳
-gsyncer status                     # 各条目最近快照年龄/份数/后端（监控用）
+gsyncer status                     # 各条目最近快照年龄/份数/后端、下次排程时间（监控用）
 gsyncer status --json              # 机器可读输出
 gsyncer status --stale-hours 26    # 任一条目超期返回退出码 3（0 关闭该行为）
 
@@ -133,7 +140,7 @@ gsyncer restore --name web --latest --to /tmp/rec        # 恢复最新快照
 gsyncer restore --name web --at 2026-06-24_030000 \
               --to /tmp/rec --force                     # 恢复指定快照并覆盖目标
 
-gsyncer check                      # 只校验配置，不同步
+gsyncer check                      # 只校验配置，不同步；有排程时列出每个条目的下次运行时间
 gsyncer version                    # 版本号
 gsyncer help                       # 显示帮助（也支持 -h / --help）
 ```
@@ -143,11 +150,65 @@ gsyncer help                       # 显示帮助（也支持 -h / --help）
 - `restore`：需 `--name` 与 `--to`，并二选一 `--at <时间戳>` 或 `--latest`；不会覆盖
   `current/` 目录，目标已存在时须加 `--force`（先清空再 `cp -a`）。
 
-定时同步示例（crontab，每天 3:00）：
+定时同步有两种接法：
+
+**按条目排程（推荐）**：在配置里给条目写 `schedule`（或在 `[defaults]` 写一个公共的），
+cron 只负责每分钟调一次 `tick`，每个条目什么时候跑、主机不在线怎么办都由配置决定：
+
+```cron
+* * * * * /usr/local/bin/gsyncer tick
+```
+
+**整批同步**：cron 直接调 `sync`，所有条目同一时间一起跑（不看 `schedule`，也不探测在线）：
 
 ```cron
 0 3 * * * /usr/local/bin/gsyncer sync >> /var/log/gsyncer.log 2>&1
 ```
+
+### 排程与不在线处理
+
+```toml
+[defaults]
+  schedule = "5 3 * * 2"            # 所有条目默认每周二 03:05
+
+[[sync]]
+  name       = "laptop-docs"        # 笔记本：周一 16:00，关机就每天 16:00 再试
+  schedule   = "0 16 * * 1"
+  on_offline = "retry"
+  offline_retry_interval = "24h"
+  # ...其余字段同普通条目
+```
+
+- `schedule` 是标准 5 字段 cron（分 时 日 月 周），**按本机时区**；也接受 `@daily` 这类写法。
+  条目不写就继承 `defaults.schedule`；写 `"manual"` 表示该条目只手动同步；哪里都没写 = 仅手动。
+- 到点时主机不在线怎么办由 `on_offline` 决定：
+
+| `on_offline` | 行为 |
+|---|---|
+| `force`（默认） | 不探测，照常开始同步；连不上就算失败并报警。适合 7×24 的服务器——对它们来说"不在线"本身就是故障 |
+| `retry` | 先探测；不在线就在 `offline_retry_interval`（默认 `30m`）后再试，直到成功、用完 `offline_retry_limit`（默认 `0` = 不限）或下一个排程点到来。**放弃时按失败报警** |
+| `skip` | 先探测；不在线就跳过这一次，等下一个排程点，不报警 |
+
+几条值得知道的行为：
+
+- **怎样算"不在线"**：用和同步完全相同的 ssh 参数（同一个 `user@host`、端口、密钥、
+  known_hosts，因此也走同一个 ssh_config ProxyCommand）执行一次 `true`。只有 ssh 自己的
+  失败（退出码 255）且报错属于"连不上主机"一类（超时、拒绝连接、无路由、解析失败、
+  Teleport 报节点离线等）才算不在线；**密钥被拒、host key 变了**这类问题不算——它们不会
+  自己好，所以照常同步、以失败报警，而不是悄悄重试。探测失败会隔 30 秒再试一次，两次都
+  不通才判定不在线，避免一次抖动就让 `skip` 白白丢掉一整期。
+- **同步到一半掉线**（合上笔记本、VPN 断开）：同步失败后会再探测一次，确认不在线就按
+  `on_offline` 处理，而不是报失败。
+- **重试时间对齐排程点**：`24h` 重试会落在每天 16:00，而不是每天往后漂几秒。
+- **错过的排程会补跑一次**：跑 gsyncer 的机器在排程点关机了，开机后的第一次 `tick`
+  就补上（只补一次，不会把错过的几期都补一遍）。
+- **新加的条目不会立刻跑**，从下一个排程点开始；改了 `schedule` 立即按新的算。
+- **手动 `sync` 成功会结清正在进行的离线重试**，不会过后再同步一遍。
+- `tick` 绝大多数时候什么都不用做，这时**不写日志、不追加汇总、不发通知**；
+  离线重试只记录"本期第一次不在线"与最终结果，中间的重试只更新状态文件。
+- 每个条目的排程状态存放在配置文件同目录的 `state/<条目名>.json`（不在 `local_path` 下，
+  没到点的条目根本不会碰备份盘——对会休眠的 NAS 阵列盘很重要）。用 `gsyncer status`
+  查看下次运行时间、是否在离线重试中、是否逾期（逾期通常意味着 cron 没在调 `tick`）。
 
 ---
 
@@ -169,6 +230,10 @@ gsyncer help                       # 显示帮助（也支持 -h / --help）
   post_sync = ""                 # 同步成功后执行的命令（sh -c）
   local_mode          = "mirror" # 本地数据模型：mirror（默认）/ archive（条目可覆盖）
   remove_source_files = false    # 同步成功后是否删除远端源文件（条目可覆盖）
+  schedule   = "5 3 * * 2"       # gsyncer tick 的默认排程（cron，本机时区）；省略 = 仅手动
+  on_offline = "force"           # 到点主机不在线：force（默认）/ retry / skip（条目可覆盖）
+  offline_retry_interval = "30m" # on_offline = "retry" 的重试间隔（条目可覆盖）
+  offline_retry_limit    = 0     # 每期最多重试次数，0 = 直到下一个排程点（条目可覆盖）
   [defaults.retention]           # 条目未覆盖时的默认保留策略
     recent     = 7
     monthly    = 6
@@ -237,6 +302,10 @@ gsyncer help                       # 显示帮助（也支持 -h / --help）
 | `post_sync` | | 同步成功后执行的命令；失败仅告警（覆盖 `defaults.post_sync`） |
 | `local_mode` | | 本地数据模型：`"mirror"`（默认，`current/` 恒等于远端）或 `"archive"`（`current/` 只增不减）；覆盖 `defaults.local_mode` |
 | `remove_source_files` | | 同步成功后是否删除远端源文件；覆盖 `defaults.remove_source_files` |
+| `schedule` | | `gsyncer tick` 运行该条目的 cron 表达式；`"manual"` = 仅手动；覆盖 `defaults.schedule` |
+| `on_offline` | | 到点时主机不在线：`"force"`（默认）/ `"retry"` / `"skip"`，见[排程与不在线处理](#排程与不在线处理)；覆盖 `defaults.on_offline` |
+| `offline_retry_interval` | | `retry` 的重试间隔（`30m`、`24h`，至少 `1m`）；覆盖 `defaults.offline_retry_interval` |
+| `offline_retry_limit` | | 每期最多重试次数，`0` = 直到下一个排程点；覆盖 `defaults.offline_retry_limit` |
 | `retention` | | 覆盖默认保留策略，未填字段回退到 `defaults.retention` |
 
 `pre_sync` / `post_sync` 经 `sh -c` 执行，条目信息以环境变量传入：`GSYNC_NAME`、
@@ -355,7 +424,7 @@ local_path/
 
 ### 日志
 
-每次 `sync` / `prune` 在可执行文件同目录的 `logs/` 下生成一份运行日志，并追加一行汇总；旧日志按 `[log]` 的 `keep_days` / `keep_count` 自动清理。
+每次 `sync` / `prune` 在可执行文件同目录的 `logs/` 下生成一份运行日志，并追加一行汇总；`tick` 只在真的做了事（同步、或遇到不在线）时才写，汇总行末尾带「（排程）」和不在线说明。旧日志按 `[log]` 的 `keep_days` / `keep_count` 自动清理。
 
 ---
 

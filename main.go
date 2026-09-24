@@ -20,6 +20,7 @@ import (
 	"gsyncer/internal/logx"
 	"gsyncer/internal/notify"
 	"gsyncer/internal/restore"
+	"gsyncer/internal/schedule"
 	"gsyncer/internal/snapshot"
 	"gsyncer/internal/syncer"
 	"gsyncer/internal/tui"
@@ -38,7 +39,7 @@ func signalCtx() (context.Context, context.CancelFunc) {
 //	go build -ldflags "-X main.version=1.2.3"
 //
 // The literal here is the fallback for a plain `go build` (and for tests).
-var version = "0.1.0"
+var version = "0.2.0"
 
 func exeDir() string {
 	p, err := os.Executable()
@@ -55,6 +56,7 @@ func usage(w io.Writer) {
 用法:
   gsyncer                       启动交互式 TUI
   gsyncer sync [flags]          同步条目 (-name -server -dry-run -config)
+  gsyncer tick [flags]          只跑到点的排程条目，供 cron 每分钟调用 (-name -dry-run -config)
   gsyncer list [-config path]   列出已配置的条目
   gsyncer snapshots -name N     列出某条目的快照 (-config)
   gsyncer status [flags]        各条目快照健康度 (-json -stale-hours -config)
@@ -90,6 +92,8 @@ func main() {
 		usage(os.Stdout)
 	case "sync":
 		os.Exit(cmdSync(os.Args[2:]))
+	case "tick":
+		os.Exit(cmdTick(os.Args[2:]))
 	case "list":
 		os.Exit(cmdList(os.Args[2:]))
 	case "snapshots":
@@ -186,6 +190,16 @@ func cmdSync(argv []string) int {
 	}
 	results := syncer.SyncMany(ctx, entries, cfg.Defaults, realDeps(rl, knownHostsPath(*cfgFlag, exeDir())), *dry, n)
 
+	// A manual sync that reached a host an offline retry is chasing has served
+	// that occurrence; stop the scheduler from chasing it again.
+	if !*dry {
+		store := schedule.Store{Dir: statePath(*cfgFlag, exeDir())}
+		if err := syncer.SettleManual(results, entries, cfg.Defaults, store, time.Now()); err != nil {
+			fmt.Fprintln(os.Stderr, "schedule state:", err)
+			rl.Errorf("schedule state: %v", err)
+		}
+	}
+
 	line := summaryLine(results, time.Since(start))
 	rl.Infof("%s", line)
 	_ = logx.AppendSummary(logDir, start.Format("2006-01-02 15:04:05")+" "+line)
@@ -211,6 +225,96 @@ func cmdSync(argv []string) int {
 	return 0
 }
 
+// cmdTick runs whatever the schedules say is due. cron calls it once a minute;
+// on the vast majority of calls nothing is due and it exits without writing a
+// log file, a summary line, or a notification.
+func cmdTick(argv []string) int {
+	fs := flag.NewFlagSet("tick", flag.ExitOnError)
+	cfgFlag := fs.String("config", "", "config file path")
+	name := fs.String("name", "", "only this entry")
+	dry := fs.Bool("dry-run", false, "show what is due and what would happen, changing nothing")
+	jobs := fs.Int("jobs", 0, "max entries to sync concurrently (0 = defaults.jobs)")
+	_ = fs.Parse(argv)
+
+	cfg, err := loadConfig(*cfgFlag)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "config:", err)
+		return 1
+	}
+	entries := selectEntries(cfg.Sync, *name, "")
+	if *dry && countScheduled(entries, cfg.Defaults) == 0 {
+		// Only in a dry run: from cron this would print every minute.
+		fmt.Fprintln(os.Stderr, "tick: no entry has a schedule; set defaults.schedule or an entry's schedule")
+	}
+	n := *jobs
+	if n <= 0 {
+		n = cfg.Defaults.EffectiveJobs()
+	}
+	store := schedule.Store{Dir: statePath(*cfgFlag, exeDir())}
+	logDir := filepath.Join(exeDir(), "logs")
+	start := time.Now()
+	lg := logx.NewLazyRunLogger(logDir, start)
+	defer lg.Close()
+
+	ctx, stop := signalCtx()
+	defer stop()
+	results := syncer.Tick(ctx, entries, cfg.Defaults, realDeps(lg, knownHostsPath(*cfgFlag, exeDir())), store, *dry, n)
+
+	if *dry {
+		writeTickPlan(os.Stdout, entries, cfg.Defaults, results, time.Now())
+		return 0
+	}
+	var rep []syncer.TickResult
+	for _, r := range results {
+		if r.Reportable() {
+			rep = append(rep, r)
+		}
+	}
+	rep, suppressed := throttleTickErrors(rep, store.Dir, time.Now())
+	for _, r := range suppressed {
+		fmt.Fprintf(os.Stderr, "tick: %s: %v (already reported within the last %s)\n",
+			r.Name, r.Err, config.FormatDuration(errorAlertInterval))
+	}
+	if len(rep) == 0 {
+		if len(suppressed) > 0 {
+			return 1
+		}
+		return 0
+	}
+
+	dur := time.Since(start)
+	line := tickSummaryLine(rep, dur)
+	lg.Infof("%s", line)
+	_ = logx.AppendSummary(logDir, start.Format("2006-01-02 15:04:05")+" "+line)
+	_ = logx.Cleanup(logDir, cfg.Log.KeepDays, cfg.Log.KeepCount, time.Now())
+	fmt.Println(line)
+
+	var notifiable []syncer.Result
+	for _, r := range rep {
+		if r.Notifiable() {
+			notifiable = append(notifiable, r.Result)
+		}
+	}
+	if len(notifiable) > 0 {
+		payload := notify.Build(notifiable, entries, dur)
+		if notify.ShouldSend(cfg.Notify, payload) {
+			if err := notify.Send(context.Background(), cfg.Notify, payload, nil, execx.Real{}); err != nil {
+				fmt.Fprintln(os.Stderr, "notify:", err)
+				lg.Errorf("notify: %v", err)
+			}
+		}
+	}
+	if len(suppressed) > 0 {
+		return 1
+	}
+	for _, r := range rep {
+		if !r.OK && !r.Skipped {
+			return 1
+		}
+	}
+	return 0
+}
+
 func cmdStatus(argv []string) int {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
 	cfgFlag := fs.String("config", "", "config file path")
@@ -225,6 +329,7 @@ func cmdStatus(argv []string) int {
 	}
 	ctx := context.Background()
 	now := time.Now()
+	store := schedule.Store{Dir: statePath(*cfgFlag, exeDir())}
 	sts := make([]EntryStatus, 0, len(cfg.Sync))
 	anyStale := false
 	for _, s := range cfg.Sync {
@@ -234,6 +339,7 @@ func cmdStatus(argv []string) int {
 			fmt.Fprintf(os.Stderr, "status %q: %v\n", s.Name, err)
 		}
 		st := computeStatus(s.Name, backend, times, now, *staleHours)
+		applySchedule(&st, s, cfg.Defaults, store, now)
 		anyStale = anyStale || st.Stale
 		sts = append(sts, st)
 	}
@@ -317,6 +423,7 @@ func cmdCheck(argv []string) int {
 		return 1
 	}
 	fmt.Printf("config OK: %d entr%s\n", len(cfg.Sync), plural(len(cfg.Sync)))
+	writeSchedulePreview(os.Stdout, cfg.Sync, cfg.Defaults, time.Now())
 	return 0
 }
 

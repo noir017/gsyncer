@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -57,6 +58,58 @@ func (l *RunLogger) Errorf(format string, a ...any) { l.write("ERROR", format, a
 
 // Close closes the underlying file.
 func (l *RunLogger) Close() error { return l.f.Close() }
+
+// LazyRunLogger is a RunLogger that creates its file only when the first line
+// is written. `gsyncer tick` runs every minute and almost always has nothing
+// to do; a file per tick would bury logs/ and, through keep_count, evict the
+// logs of the runs that actually happened. Safe for concurrent use.
+type LazyRunLogger struct {
+	dir string
+	ts  time.Time
+
+	mu  sync.Mutex
+	l   *RunLogger
+	err error
+}
+
+// NewLazyRunLogger returns a logger that will open dir/<ts>.log on first use.
+func NewLazyRunLogger(dir string, ts time.Time) *LazyRunLogger {
+	return &LazyRunLogger{dir: dir, ts: ts}
+}
+
+func (z *LazyRunLogger) write(level, format string, a ...any) {
+	z.mu.Lock()
+	defer z.mu.Unlock()
+	if z.l == nil && z.err == nil {
+		z.l, z.err = NewRunLogger(z.dir, z.ts)
+	}
+	if z.l != nil {
+		z.l.write(level, format, a...)
+	}
+}
+
+// Infof logs at INFO level.
+func (z *LazyRunLogger) Infof(format string, a ...any) { z.write("INFO", format, a...) }
+
+// Errorf logs at ERROR level.
+func (z *LazyRunLogger) Errorf(format string, a ...any) { z.write("ERROR", format, a...) }
+
+// Err returns the error from opening the log file, if the first write hit one.
+func (z *LazyRunLogger) Err() error {
+	z.mu.Lock()
+	defer z.mu.Unlock()
+	return z.err
+}
+
+// Close closes the file if one was opened.
+func (z *LazyRunLogger) Close() error {
+	z.mu.Lock()
+	defer z.mu.Unlock()
+	if z.l == nil {
+		return nil
+	}
+	return z.l.Close()
+}
 
 // AppendSummary appends one line to dir/summary.log (kept private, see
 // NewRunLogger).

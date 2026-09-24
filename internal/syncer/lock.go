@@ -44,3 +44,19 @@ func (l *fileLock) release() {
 	_ = syscall.Flock(int(l.f.Fd()), syscall.LOCK_UN)
 	_ = l.f.Close()
 }
+
+// lockHeld reports whether a sync currently holds root's lock. Unlike
+// acquireLock it creates nothing: a missing lock file just means no sync has
+// ever run there, so a dry-run tick stays free of side effects.
+func lockHeld(root string) bool {
+	f, err := os.OpenFile(filepath.Join(root, ".gsyncer.lock"), os.O_RDWR, 0)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		return err == syscall.EWOULDBLOCK
+	}
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return false
+}
