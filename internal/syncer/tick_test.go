@@ -24,11 +24,11 @@ const (
 	// The same laptop a few minutes after its agent dropped: the node is still
 	// listed, but its reverse tunnel is gone.
 	errTeleportNoTunnel = "ERROR: cannot relogin in non-interactive session\n\tfailed connecting to host pacvue: Teleport proxy failed to connect to \"node\" agent \"pacvue\" over reverse tunnel:\n\n  no tunnel connection found: no node reverse tunnel for f39d68fe-e110-4f27-9588-4209990ce8c0.teleport-unraid.lan.noharanas.eu.org found\n\nThis usually means that the agent is offline or has disconnected.\n\nConnection closed by UNKNOWN port 65535"
-	errNoRoute         = "ssh: connect to host 192.168.0.254 port 22: No route to host"
-	errRefused         = "ssh: connect to host 192.168.0.10 port 1: Connection refused"
-	errDNS             = "ssh: Could not resolve hostname no-such-host.invalid: Name or service not known"
-	errDenied          = "root@pacvue.teleport-unraid.lan.noharanas.eu.org: Permission denied (publickey)."
-	errHostKey         = "@@@@@@@@@@@\n@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\nHost key verification failed."
+	errNoRoute          = "ssh: connect to host 192.168.0.254 port 22: No route to host"
+	errRefused          = "ssh: connect to host 192.168.0.10 port 1: Connection refused"
+	errDNS              = "ssh: Could not resolve hostname no-such-host.invalid: Name or service not known"
+	errDenied           = "root@pacvue.teleport-unraid.lan.noharanas.eu.org: Permission denied (publickey)."
+	errHostKey          = "@@@@@@@@@@@\n@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\nHost key verification failed."
 )
 
 func sshFail(stderr string) (execx.Result, error) {
