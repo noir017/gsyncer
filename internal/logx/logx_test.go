@@ -38,6 +38,32 @@ func TestRunLoggerWritesFile(t *testing.T) {
 	}
 }
 
+func TestLazyRunLoggerCreatesFileOnlyOnWrite(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "logs")
+	quiet := NewLazyRunLogger(dir, ts("2026-09-28_160000"))
+	if err := quiet.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("an unused lazy logger must create nothing (err=%v)", err)
+	}
+
+	l := NewLazyRunLogger(dir, ts("2026-09-28_160100"))
+	l.Infof("host offline (attempt %d)", 1)
+	l.Errorf("second line")
+	l.Close()
+	data, err := os.ReadFile(filepath.Join(dir, "2026-09-28_160100.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := string(data); !strings.Contains(s, "attempt 1") || !strings.Contains(s, "second line") {
+		t.Fatalf("log content = %q", s)
+	}
+	if l.Err() != nil {
+		t.Fatal(l.Err())
+	}
+}
+
 func TestAppendSummary(t *testing.T) {
 	dir := t.TempDir()
 	if err := AppendSummary(dir, "run A ok"); err != nil {

@@ -17,6 +17,7 @@ import (
 	"gsyncer/internal/config"
 	"gsyncer/internal/execx"
 	"gsyncer/internal/logx"
+	"gsyncer/internal/schedule"
 	"gsyncer/internal/snapshot"
 	"gsyncer/internal/syncer"
 )
@@ -115,6 +116,14 @@ func (m *runModel) start(entries []config.Sync, dryRun bool) tea.Cmd {
 		deps := syncer.Deps{Runner: m.runner, FSType: m.fsType, Now: m.now, Log: lg,
 			KnownHostsFile: filepath.Join(filepath.Dir(m.cfgPath), "known_hosts")}
 		results := syncer.SyncMany(ctx, entries, m.cfg.Defaults, deps, dryRun, m.cfg.Defaults.EffectiveJobs())
+		if !dryRun {
+			// Same as `gsyncer sync`: a manual success settles any offline retry
+			// the scheduler is chasing for these entries.
+			store := schedule.Store{Dir: filepath.Join(filepath.Dir(m.cfgPath), "state")}
+			if err := syncer.SettleManual(results, entries, m.cfg.Defaults, store, m.now()); err != nil {
+				lg.Errorf("schedule state: %v", err)
+			}
+		}
 		dur := m.now().Sub(start)
 		line := summarize(results, dur)
 		if rl != nil {
