@@ -21,6 +21,9 @@ import (
 // Real stderr captured on the deployment (unraid → Teleport / plain ssh).
 const (
 	errTeleportOffline = "ERROR: failed connecting to host pacvue: target host pacvue is offline or does not exist\n\nConnection closed by UNKNOWN port 65535"
+	// The same laptop a few minutes after its agent dropped: the node is still
+	// listed, but its reverse tunnel is gone.
+	errTeleportNoTunnel = "ERROR: cannot relogin in non-interactive session\n\tfailed connecting to host pacvue: Teleport proxy failed to connect to \"node\" agent \"pacvue\" over reverse tunnel:\n\n  no tunnel connection found: no node reverse tunnel for f39d68fe-e110-4f27-9588-4209990ce8c0.teleport-unraid.lan.noharanas.eu.org found\n\nThis usually means that the agent is offline or has disconnected.\n\nConnection closed by UNKNOWN port 65535"
 	errNoRoute         = "ssh: connect to host 192.168.0.254 port 22: No route to host"
 	errRefused         = "ssh: connect to host 192.168.0.10 port 1: Connection refused"
 	errDNS             = "ssh: Could not resolve hostname no-such-host.invalid: Name or service not known"
@@ -43,6 +46,7 @@ func TestClassifyProbe(t *testing.T) {
 		{"reachable", execx.Result{}, nil, false, true, false},
 		{"windows shell without true", execx.Result{Code: 1, Stderr: "CommandNotFoundException"}, errors.New("exit status 1"), false, true, false},
 		{"teleport node offline", execx.Result{Code: 255, Stderr: errTeleportOffline}, errors.New("x"), false, false, true},
+		{"teleport reverse tunnel gone", execx.Result{Code: 255, Stderr: errTeleportNoTunnel}, errors.New("x"), false, false, true},
 		{"no route", execx.Result{Code: 255, Stderr: errNoRoute}, errors.New("x"), false, false, true},
 		{"refused", execx.Result{Code: 255, Stderr: errRefused}, errors.New("x"), false, false, true},
 		{"dns", execx.Result{Code: 255, Stderr: errDNS}, errors.New("x"), false, false, true},

@@ -45,6 +45,7 @@ type ProbeResult struct {
 var offlineMarkers = []string{
 	"is offline or does not exist", // Teleport: agent node not connected to the cluster
 	"failed connecting to host",    // Teleport: proxy could not dial the node
+	"no tunnel connection found",   // Teleport: agent still listed, reverse tunnel gone
 	"connection timed out",
 	"operation timed out",
 	"no route to host",
