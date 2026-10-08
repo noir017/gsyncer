@@ -39,7 +39,7 @@ func signalCtx() (context.Context, context.CancelFunc) {
 //	go build -ldflags "-X main.version=1.2.3"
 //
 // The literal here is the fallback for a plain `go build` (and for tests).
-var version = "0.2.0"
+var version = "0.3.0"
 
 func exeDir() string {
 	p, err := os.Executable()
@@ -210,6 +210,7 @@ func cmdSync(argv []string) int {
 	// may be cancelled by ctrl+c — a cancelled run is exactly when a failure
 	// alert matters most); Send bounds each sink with its own timeout.
 	payload := notify.Build(results, entries, time.Since(start))
+	payload.DryRun = *dry
 	if notify.ShouldSend(cfg.Notify, payload) {
 		if err := notify.Send(context.Background(), cfg.Notify, payload, nil, execx.Real{}); err != nil {
 			fmt.Fprintln(os.Stderr, "notify:", err)

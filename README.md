@@ -377,8 +377,26 @@ cron 只负责每分钟调一次 `tick`，每个条目什么时候跑、主机�
 | `command` | 通知命令，经 `sh -c` 执行 |
 
 通知命令可用环境变量：`GSYNC_STATUS`（`success`/`failure`）、`GSYNC_OK`、
-`GSYNC_FAILED`、`GSYNC_SKIPPED`、`GSYNC_SUMMARY`（一句话摘要）、`GSYNC_JSON`（完整 JSON）。
-webhook 的 JSON 含每条目的 `host`/`ok`/`error`/`files`/`bytes`/`duration_sec`。
+`GSYNC_FAILED`、`GSYNC_SKIPPED`、`GSYNC_SUMMARY`（一句话摘要）、`GSYNC_TEXT`（多行明细，见下）、
+`GSYNC_JSON`（完整 JSON）。
+webhook 的 JSON 含 `dry_run` 与每条目的 `host`/`ok`/`error`/`files`/`bytes`/`duration_sec`。
+
+`GSYNC_TEXT` 是给人看的纯文本：首行总结，其后每条目一行，失败的排最前，错误折成一行并截断到 300 字；
+手动 `sync --dry-run` 的标题带「（预演）」。可原样推给聊天机器人，不需要 jq：
+
+```
+备份失败：成功 1 / 失败 1 / 耗时 1m30s
+✗ db（h2）rsync: exit status 255: ssh: connect to host h2 port 22: Connection timed out
+✓ web（h1）传输 3 个文件 / 5.0 MB / 1m15s
+```
+
+```toml
+[notify]
+  on_failure = true
+  on_success = true
+  # token 放在单独的 600 文件里，不写进 config.toml
+  command = '. /path/to/push.env && curl -fsS -m 8 -H "Authorization: Bearer $PUSH_TOKEN" --data-binary "$GSYNC_TEXT" "$PUSH_URL"'
+```
 
 ---
 

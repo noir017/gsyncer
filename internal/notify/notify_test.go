@@ -131,10 +131,56 @@ func TestSendCommandRunsWithEnv(t *testing.T) {
 		t.Fatalf("bad command invocation: %+v", c)
 	}
 	env := strings.Join(c.Env, "\n")
-	for _, want := range []string{"GSYNC_STATUS=failure", "GSYNC_FAILED=2", "GSYNC_JSON="} {
+	for _, want := range []string{"GSYNC_STATUS=failure", "GSYNC_FAILED=2", "GSYNC_TEXT=备份失败", "GSYNC_JSON="} {
 		if !strings.Contains(env, want) {
 			t.Fatalf("env missing %q in %v", want, c.Env)
 		}
+	}
+}
+
+// Text leads with the headline and lists failures before successes, so the
+// entry that needs attention is the first thing read in a long batch.
+func TestTextListsFailuresFirst(t *testing.T) {
+	results, entries := sampleResults()
+	got := Text(Build(results, entries, 3*time.Second))
+	want := "备份失败：成功 1 / 失败 1 / 耗时 3s\n" +
+		"✗ db（h2）rsync failed\n" +
+		"✓ web（h1）传输 5 个文件 / 42 B / 2s"
+	if got != want {
+		t.Fatalf("Text =\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestTextSuccessAndDryRun(t *testing.T) {
+	p := Build([]syncer.Result{
+		{Name: "web", OK: true, Files: 3, Bytes: 5 << 20, Duration: 75 * time.Second},
+		{Name: "db", Skipped: true, Err: errString("locked")},
+	}, []config.Sync{{Name: "web", Host: "h1"}, {Name: "db", Host: "h2"}}, 90*time.Second)
+	p.DryRun = true
+	got := Text(p)
+	want := "备份成功（预演）：成功 1 / 失败 0 / 跳过 1 / 耗时 1m30s\n" +
+		"- db（h2）跳过：locked\n" +
+		"✓ web（h1）传输 3 个文件 / 5.0 MB / 1m15s"
+	if got != want {
+		t.Fatalf("Text =\n%s\nwant\n%s", got, want)
+	}
+}
+
+// A multi-line stderr tail must fold to one capped line: the message is for a
+// phone screen, and the full error is in the run log.
+func TestTextFoldsAndCapsErrors(t *testing.T) {
+	long := "ssh: connect\n  to host x\n" + strings.Repeat("é", maxErrRunes)
+	p := Build([]syncer.Result{{Name: "db", Err: errString(long)}},
+		[]config.Sync{{Name: "db", Host: "h2"}}, time.Second)
+	lines := strings.Split(Text(p), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("error not folded onto one line: %q", lines)
+	}
+	if !strings.HasPrefix(lines[1], "✗ db（h2）ssh: connect to host x é") || !strings.HasSuffix(lines[1], "é…") {
+		t.Fatalf("bad error line: %q", lines[1])
+	}
+	if n := len([]rune(strings.TrimPrefix(lines[1], "✗ db（h2）"))); n != maxErrRunes+1 {
+		t.Fatalf("error is %d runes, want %d (cap + ellipsis)", n, maxErrRunes+1)
 	}
 }
 
