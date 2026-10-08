@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"gsyncer/internal/config"
@@ -38,6 +39,7 @@ type EntryResult struct {
 // Payload is the JSON body posted to a webhook and serialized into GSYNC_JSON.
 type Payload struct {
 	Status      string        `json:"status"` // "success" or "failure"
+	DryRun      bool          `json:"dry_run"`
 	OK          int           `json:"ok"`
 	Failed      int           `json:"failed"`
 	Skipped     int           `json:"skipped"`
@@ -83,6 +85,83 @@ func Build(results []syncer.Result, entries []config.Sync, dur time.Duration) Pa
 		p.Status = "success"
 	}
 	return p
+}
+
+// maxErrRunes caps each entry's error in Text: rsync/ssh errors can carry a
+// whole stderr tail, and a chat message only needs enough to know where to look.
+const maxErrRunes = 300
+
+// Text renders the payload for a human (exported to commands as GSYNC_TEXT):
+// a headline, then one line per entry — failures first, so the entry that needs
+// attention is not buried in a long weekly batch. It is plain text with no
+// markup, ready to pipe into a chat push or a mail body as-is.
+func Text(p Payload) string {
+	var b strings.Builder
+	head := "备份成功"
+	if p.Status == "failure" {
+		head = "备份失败"
+	}
+	if p.DryRun {
+		head += "（预演）"
+	}
+	fmt.Fprintf(&b, "%s：成功 %d / 失败 %d", head, p.OK, p.Failed)
+	if p.Skipped > 0 {
+		fmt.Fprintf(&b, " / 跳过 %d", p.Skipped)
+	}
+	fmt.Fprintf(&b, " / 耗时 %s", humanDuration(p.DurationSec))
+	for _, e := range p.Entries {
+		if !e.OK && !e.Skipped {
+			fmt.Fprintf(&b, "\n✗ %s（%s）%s", e.Name, e.Host, oneLine(e.Error, maxErrRunes))
+		}
+	}
+	for _, e := range p.Entries {
+		if e.Skipped {
+			fmt.Fprintf(&b, "\n- %s（%s）跳过", e.Name, e.Host)
+			if e.Error != "" {
+				b.WriteString("：" + oneLine(e.Error, maxErrRunes))
+			}
+		}
+	}
+	for _, e := range p.Entries {
+		if e.OK {
+			fmt.Fprintf(&b, "\n✓ %s（%s）传输 %d 个文件 / %s / %s",
+				e.Name, e.Host, e.Files, humanSize(e.Bytes), humanDuration(e.DurationSec))
+		}
+	}
+	return b.String()
+}
+
+// oneLine folds s onto a single line and truncates it to at most n runes.
+func oneLine(s string, n int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if r := []rune(s); len(r) > n {
+		return string(r[:n]) + "…"
+	}
+	return s
+}
+
+// humanSize formats a byte count as a short human string.
+func humanSize(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for x := n / unit; x >= unit; x /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+// humanDuration rounds to what a reader cares about: tenths under a minute,
+// whole seconds above.
+func humanDuration(sec float64) string {
+	d := time.Duration(sec * float64(time.Second))
+	if d < time.Minute {
+		return d.Round(100 * time.Millisecond).String()
+	}
+	return d.Round(time.Second).String()
 }
 
 // ShouldSend reports whether the configured switches call for a notification
@@ -152,7 +231,9 @@ func postWebhook(ctx context.Context, url string, body []byte, client *http.Clie
 func runCommand(ctx context.Context, command string, p Payload, body []byte, runner execx.Runner) error {
 	// Expose both a machine-readable blob (GSYNC_JSON) and convenient scalars so
 	// a command like `echo "$GSYNC_SUMMARY" | mail -s gsyncer admin@x` works without
-	// parsing JSON. execx has no stdin, so the JSON travels via the environment.
+	// parsing JSON — and GSYNC_TEXT, the per-entry report, so a chat push can say
+	// which host failed and why without jq. execx has no stdin, so the JSON
+	// travels via the environment.
 	env := []string{
 		"GSYNC_STATUS=" + p.Status,
 		"GSYNC_OK=" + strconv.Itoa(p.OK),
@@ -160,6 +241,7 @@ func runCommand(ctx context.Context, command string, p Payload, body []byte, run
 		"GSYNC_SKIPPED=" + strconv.Itoa(p.Skipped),
 		"GSYNC_SUMMARY=" + fmt.Sprintf("gsyncer %s: ok %d, failed %d, skipped %d, %.1fs",
 			p.Status, p.OK, p.Failed, p.Skipped, p.DurationSec),
+		"GSYNC_TEXT=" + Text(p),
 		"GSYNC_JSON=" + string(body),
 	}
 	_, err := runner.RunEnv(ctx, env, "sh", "-c", command)
